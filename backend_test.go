@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -222,6 +223,14 @@ func startDevVault(t *testing.T, withAudit bool) *devVault {
 	// Wait for the listener to come up.
 	cfg := vaultapi.DefaultConfig()
 	cfg.Address = "http://" + addr
+	// Bypass any HTTP(S)_PROXY / NO_PROXY env vars on the developer
+	// or CI host. The dev server is on 127.0.0.1 and routing the
+	// loopback traffic through a corporate proxy would break the
+	// hermeticity claim. Explicit nil ProxyFunc disables proxying
+	// regardless of env-var contents.
+	if t, ok := cfg.HttpClient.Transport.(*http.Transport); ok {
+		t.Proxy = nil
+	}
 	client, err := vaultapi.NewClient(cfg)
 	if err != nil {
 		cleanup()
@@ -561,7 +570,18 @@ func cachedPluginBinary() (string, error) {
 		// failure would leak the empty tempdir on every retry.
 		pluginCacheDir = dir
 		path := filepath.Join(dir, pluginName)
-		build := exec.Command("go", "build", "-trimpath", "-o", path, "./cmd/"+pluginName)
+		// Build the plugin with -race iff the test binary is itself
+		// race-instrumented. The plugin runs in a separate process
+		// so the test's race detector won't see across the boundary
+		// — building the plugin with -race instruments it to flag
+		// its own internal races. runtime.RaceEnabled is true only
+		// when the calling binary was compiled with -race.
+		args := []string{"build", "-trimpath"}
+		if raceEnabled {
+			args = append(args, "-race")
+		}
+		args = append(args, "-o", path, "./cmd/"+pluginName)
+		build := exec.Command("go", args...)
 		build.Dir = repoRoot
 		if out, err := build.CombinedOutput(); err != nil {
 			pluginCacheErr = fmt.Errorf("go build: %w\n%s", err, out)
