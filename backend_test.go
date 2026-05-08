@@ -46,12 +46,26 @@ import (
 // Plugin build cache. The plugin compiles once per `go test`
 // invocation (~1s with the cached compile, ~3s cold). Each test
 // then copies the cached binary into its own tempdir so vault
-// starts cleanly with -dev-plugin-dir.
+// starts cleanly with -dev-plugin-dir. The cache directory is
+// reaped in TestMain after m.Run() so repeated runs don't leak
+// argon2-plugin-cache-* directories under $TMPDIR.
 var (
 	pluginCacheOnce sync.Once
 	pluginCachePath string
+	pluginCacheDir  string
 	pluginCacheErr  error
 )
+
+// TestMain runs the test binary, then removes the plugin-build
+// cache directory so repeated `go test -tags acceptance` runs
+// don't leak temp dirs.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if pluginCacheDir != "" {
+		_ = os.RemoveAll(pluginCacheDir)
+	}
+	os.Exit(code)
+}
 
 // safeBuilder wraps strings.Builder with a mutex. The vault
 // subprocess writes its log on a background goroutine while the
@@ -149,13 +163,26 @@ func startDevVault(t *testing.T, withAudit bool) *devVault {
 		"-dev-root-token-id="+devRootToken,
 		"-dev-listen-address="+addr,
 		"-dev-plugin-dir="+pluginDir,
+		// Don't write the dev root token to ~/.vault-token. Without
+		// this flag, every acceptance run would mutate the
+		// developer's home directory and leave a known-token file
+		// on disk; CI runners would see less direct impact but the
+		// hermeticity claim breaks the moment we add HOME-aware
+		// helpers later. Pair with the HOME-redirect in cmd.Env.
+		"-dev-no-store-token",
 		"-log-level=warn",
 	)
 	// Hermetic env: filter out every VAULT_* variable from the
-	// parent environment. Listing only ADDR/TOKEN/CACERT would still
-	// leak VAULT_NAMESPACE, VAULT_SKIP_VERIFY, VAULT_CLIENT_TIMEOUT,
-	// etc., any of which can change behavior under test.
-	cmd.Env = filterVaultEnv(os.Environ())
+	// parent environment, then redirect HOME at the test's tempdir
+	// so any ancillary file Vault writes (audit hints, history,
+	// etc.) lands in the test sandbox rather than the developer's
+	// real home directory. Listing only ADDR/TOKEN/CACERT would
+	// still leak VAULT_NAMESPACE, VAULT_SKIP_VERIFY,
+	// VAULT_CLIENT_TIMEOUT, etc., any of which can change behavior
+	// under test.
+	cmd.Env = append(filterVaultEnv(os.Environ()),
+		"HOME="+tmp,
+	)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatalf("stdout pipe: %v", err)
@@ -283,7 +310,8 @@ func TestAcceptance_full(t *testing.T) {
 	dv := startDevVault(t, false)
 	defer dv.cleanup()
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	cli := dv.client
 
 	if _, err := cli.Logical().WriteWithContext(ctx, mountPath+"/policy/users", map[string]interface{}{
@@ -372,7 +400,8 @@ func TestAcceptance_policyDeleteRejectsWhenReferenced(t *testing.T) {
 	dv := startDevVault(t, false)
 	defer dv.cleanup()
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	cli := dv.client
 
 	if _, err := cli.Logical().WriteWithContext(ctx, mountPath+"/policy/users", nil); err != nil {
@@ -401,7 +430,8 @@ func TestAcceptance_listReturnsIDsOnly(t *testing.T) {
 	dv := startDevVault(t, false)
 	defer dv.cleanup()
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	cli := dv.client
 
 	if _, err := cli.Logical().WriteWithContext(ctx, mountPath+"/policy/users", nil); err != nil {
@@ -446,7 +476,8 @@ func TestAcceptance_auditLogRedactsPassword(t *testing.T) {
 	dv := startDevVault(t, true)
 	defer dv.cleanup()
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	cli := dv.client
 
 	const sentinel = "REDACTION-CANARY-correct horse battery staple"
@@ -530,6 +561,8 @@ func cachedPluginBinary() (string, error) {
 			pluginCacheErr = fmt.Errorf("go build: %w\n%s", err, out)
 			return
 		}
+		// Record dir so TestMain can clean it up after m.Run().
+		pluginCacheDir = dir
 		pluginCachePath = path
 	})
 	return pluginCachePath, pluginCacheErr
