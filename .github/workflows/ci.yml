@@ -27,11 +27,21 @@ jobs:
         run: go test -race -short ./...
 
       # Acceptance tests build the plugin binary and run it under a
-      # real `vault server -dev` subprocess. Requires the vault CLI.
+      # real `vault server -dev` subprocess. Install the official
+      # release binary directly — there is no first-party
+      # hashicorp/setup-vault action; community alternatives are
+      # avoided here in favor of a pinned upstream-release download.
       - name: Install vault binary
-        uses: hashicorp/setup-vault@v1
-        with:
-          version: 1.21.4
+        env:
+          VAULT_VERSION: 1.21.4
+        run: |
+          set -euo pipefail
+          arch=$(dpkg --print-architecture)
+          curl -fsSL -o /tmp/vault.zip \
+            "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_${arch}.zip"
+          sudo unzip -d /usr/local/bin /tmp/vault.zip
+          sudo chmod +x /usr/local/bin/vault
+          vault --version
 
       - name: go test (acceptance, real vault subprocess)
         run: go test -tags acceptance -race -timeout 5m ./...
