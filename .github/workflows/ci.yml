@@ -26,5 +26,12 @@ jobs:
       - name: go test (race + short)
         run: go test -race -short ./...
 
-      - name: go test (full acceptance)
-        run: go test -race ./...
+      # Acceptance tests build the plugin binary and run it under a
+      # real `vault server -dev` subprocess. Requires the vault CLI.
+      - name: Install vault binary
+        uses: hashicorp/setup-vault@v1
+        with:
+          version: 1.21.4
+
+      - name: go test (acceptance, real vault subprocess)
+        run: go test -tags acceptance -race -timeout 5m ./...

@@ -9,10 +9,13 @@ build:
 test:
 	go test -race -short ./...
 
-# Acceptance tests run the full path suite (no -short flag).
-# Argon2id is intentionally CPU-heavy, so this target takes longer.
+# Acceptance tests build the plugin and run it under a real
+# `vault server -dev` subprocess — they exercise the
+# plugin.ServeMultiplex bridge, real audit-device redaction, and
+# the API client surface. Requires a `vault` binary on PATH.
+# Argon2id is intentionally CPU-heavy; expect ~1 minute total.
 acceptance:
-	go test -race ./...
+	go test -tags acceptance -race ./...
 
 fmt:
 	gofmt -s -w .

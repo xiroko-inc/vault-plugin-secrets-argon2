@@ -20,5 +20,12 @@ format is based on [Keep a Changelog][kac] and this project adheres to
 - Plugin entry point at `cmd/vault-plugin-secrets-argon2/main.go`
   using `plugin.ServeMultiplex`.
 - Unit tests for the cryptographic core and every path handler.
+- Acceptance tests (`backend_test.go`, gated by `//go:build acceptance`)
+  that build the plugin and run it under a real `vault server -dev`
+  subprocess. Cover the §9.2 happy-path, policy-delete reference
+  guarantee, list-returns-IDs-only, and audit-log password redaction
+  against a real `file` audit device.
 - CI workflows for build, static checks, schema validation, supply
-  chain audit, and release.
+  chain audit, and release. CI installs the vault binary via
+  `hashicorp/setup-vault@v1` and runs the acceptance suite on every
+  PR.
