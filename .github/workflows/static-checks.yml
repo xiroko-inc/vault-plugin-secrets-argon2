@@ -1,0 +1,57 @@
+name: static-checks
+
+on:
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  # contents: write is required by the conditional gofmt auto-push
+  # step. This is the global ~/.claude/standards/github-actions.md
+  # template pattern: developers are never blocked by whitespace.
+  # Splitting the auto-push into a separate push-event workflow is a
+  # defensible follow-up but not a v0.1.0 blocker — pull_request
+  # events do not expose write tokens to forked-PR contributors.
+  contents: write
+
+jobs:
+  format-and-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: gofmt
+        id: gofmt
+        run: |
+          gofmt -s -w .
+          if git diff-index --quiet HEAD --; then
+            echo "modified=false" >> $GITHUB_OUTPUT
+          else
+            echo "modified=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Push gofmt fixes
+        if: steps.gofmt.outputs.modified == 'true' && github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: gofmt"
+          git push
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.6
+
+      - name: govulncheck
+        uses: golang/govulncheck-action@v1

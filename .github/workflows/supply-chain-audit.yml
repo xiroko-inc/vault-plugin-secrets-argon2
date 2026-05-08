@@ -1,0 +1,41 @@
+name: supply-chain-audit
+
+# Flags any direct or transitive Go dependency published in the last
+# 3 days. Designed to surface supply chain attacks that hit early
+# adopters of newly-published versions. Warn-only — never blocks the
+# build.
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # `go list -m -u -json all` emits a sequence of full JSON
+      # objects (NOT a JSON array, NOT newline-delimited). Use
+      # JSONDecoder.raw_decode to walk the stream object-by-object —
+      # naive line-based splitting fails because nested objects
+      # (Update, Replace, Origin) contain interior `}` lines.
+      - name: Inspect module graph for newly-published versions
+        run: |
+          go list -m -u -json all > /tmp/modgraph.json
+          python3 scripts/check-mod-age.py --max-days 3 --warn-only /tmp/modgraph.json
+        env:
+          # `set -e` is fine here; the prior `pipefail` form was
+          # tripped by SIGPIPE from `go list` when python finished
+          # reading early. With the temp file there is no pipe.
+          PYTHONUNBUFFERED: "1"

@@ -1,0 +1,23 @@
+name: validate-schemas
+
+# Stub per the schema-driven development standard. This plugin's data
+# shapes are Go structs validated by the framework's TypeInt / TypeString
+# bounds — there are no JSON Schema, OpenAPI, or Protobuf documents in
+# the repo today. The job exists so future schema additions are
+# automatically validated by CI without a workflow change.
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  validate-schemas:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Schema validation placeholder
+        run: |
+          echo "No schemas configured yet. Add validators above as schemas are introduced."

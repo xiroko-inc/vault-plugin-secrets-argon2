@@ -1,0 +1,45 @@
+name: release
+
+# Tag-driven release. Push a semver tag (v0.1.0, v1.2.3) to trigger.
+# Builds linux+darwin × amd64+arm64, generates a SHA-256 checksum
+# manifest and an SBOM, and publishes a GitHub Release. SLSA
+# provenance is attached via actions/attest-build-provenance.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install Syft (for SBOM)
+        run: curl -sSfL https://get.anchore.io/syft | sudo sh -s -- -b /usr/local/bin
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/*"
