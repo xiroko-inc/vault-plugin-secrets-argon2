@@ -1,0 +1,28 @@
+# Binaries
+/vault-plugin-secrets-argon2
+/dist/
+*.exe
+*.test
+*.out
+
+# Go
+*.prof
+coverage.out
+coverage.html
+
+# Vault dev artifacts
+vault-dev.log
+.vault-token
+plugins/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local env (never commit)
+.env
+.env.*
+!.env.example
