@@ -11,6 +11,18 @@ format is based on [Keep a Changelog][kac] and this project adheres to
 
 ### Added
 
+- Fuzz tests on `ParsePHC` and `Verify` (`argon2id_fuzz_test.go`).
+  Initial run: 6.07M `FuzzParsePHC` executions + 707K `FuzzVerify`
+  executions over 10 minutes each, zero panics found. Seed corpus
+  covers the canonical happy-path vector plus structural error
+  classes (empty input, all-separator, wrong algorithm/version,
+  malformed numerics, non-base64 segments, multi-byte runes,
+  100KB-segment denial-of-service inputs).
+
+## [0.1.0] — 2026-05-08
+
+### Added
+
 - Initial v0.1.0 scaffolding.
 - Argon2id PHC primitives (`argon2id.go`) with hard parameter bounds
   per requirements §4.2 and a static reference vector pinned from the

@@ -99,12 +99,15 @@ Target: HashiCorp Vault community plugin registry. License MPL 2.0. Repo `github
 
 ### Coverage gaps (declared)
 
-- **No fuzz tests on `ParsePHC`.** The boundary tests cover the structural error classes but `go test -fuzz` would catch surprises in the byte-by-byte parser. Worth adding before v1.0.0.
+_(none open — see Closed gaps below)_
+
+### Closed gaps
+
+- **Fuzz tests on `ParsePHC` and `Verify`** (`argon2id_fuzz_test.go`, post-v0.1.0). Initial run: 6.07M + 707K executions, zero panics.
 
 ### Follow-ups before v1.0.0 (per requirements §13)
 
 1. Submit to the HashiCorp Vault Community Plugin registry once one real consumer integrates and runs for a quarter without protocol-breaking changes.
-2. Tag v0.1.0 once item 1 lands.
 
 ### Note on §9.3 `vault.TestCluster`
 
