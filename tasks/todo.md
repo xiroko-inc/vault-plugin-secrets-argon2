@@ -8,7 +8,7 @@ Target: HashiCorp Vault community plugin registry. License MPL 2.0. Repo `github
 - Org: `xiroko-inc`
 - License: MPL 2.0
 - Visibility: public
-- Initial version: no tag yet — scaffold lands on `feature/v0.1.0-scaffold`, opens PR; tag `v0.1.0` after first PR merges and CI is green
+- Initial version: tagged `v0.1.0` on 2026-05-08 after the scaffold + acceptance-suite + release-prep PRs merged. Release pipeline produced linux/darwin × amd64/arm64 archives with SBOMs and SLSA attestations. See https://github.com/xiroko-inc/vault-plugin-secrets-argon2/releases/tag/v0.1.0.
 - Repo name: `vault-plugin-secrets-argon2` (HashiCorp convention)
 
 ## Verification step (per autonomy.md)
@@ -95,7 +95,7 @@ Target: HashiCorp Vault community plugin registry. License MPL 2.0. Repo `github
 - `go build ./...` clean, `go vet ./...` clean, `go test -race -short ./...` green (30s).
 - Unit tests cover: argon2id PHC core (12 tests including pinned external reference vector), policy CRUD (5 tests), hash create/list/delete (8 tests), verify path including drift detection (5 tests).
 - Static reference vector independently produced via the `phc-winner-argon2` reference CLI installed via Homebrew (`brew install argon2`), then pinned in `argon2id_test.go`.
-- The `vault` CLI is not installed locally, so an end-to-end smoke test against `vault server -dev` was skipped. The framework-level unit tests against `logical.InmemStorage` exercise the same code paths the framework will dispatch in production. A `vault.TestCluster`-based acceptance test is queued as a follow-up before tagging v0.1.0.
+- An end-to-end acceptance suite against a real `vault server -dev` subprocess landed in PR #2 (`backend_test.go`, `//go:build acceptance`) and was green at v0.1.0 tag time. The §9.3 in-process `vault.TestCluster` pattern from the requirements doc didn't pan out because the `github.com/hashicorp/vault` main module uses an internal `replace` directive for its SDK; the subprocess approach is the working substitute.
 
 ### Coverage gaps (declared)
 
