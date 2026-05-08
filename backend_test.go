@@ -501,6 +501,8 @@ func TestAcceptance_auditLogRedactsPassword(t *testing.T) {
 	// rather than sleeping a fixed interval. Fast runners exit
 	// after the first poll; slow runners get up to 5s before the
 	// test fails with a specific "audit log never landed" message.
+	verifyMarker := []byte(mountPath + "/verify/")
+	hashMarker := mountPath + "/hash/users"
 	auditDeadline := time.Now().Add(5 * time.Second)
 	var (
 		raw    []byte
@@ -508,7 +510,7 @@ func TestAcceptance_auditLogRedactsPassword(t *testing.T) {
 	)
 	for time.Now().Before(auditDeadline) {
 		raw, readEr = os.ReadFile(dv.auditPath)
-		if readEr == nil && bytes.Contains(raw, []byte("argon2/verify/")) {
+		if readEr == nil && bytes.Contains(raw, verifyMarker) {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -516,13 +518,13 @@ func TestAcceptance_auditLogRedactsPassword(t *testing.T) {
 	if readEr != nil {
 		t.Fatalf("read audit log: %v", readEr)
 	}
-	if !bytes.Contains(raw, []byte("argon2/verify/")) {
-		t.Fatalf("audit log never received verify entry within 5s; size=%d", len(raw))
+	if !bytes.Contains(raw, verifyMarker) {
+		t.Fatalf("audit log never received %s entry within 5s; size=%d", verifyMarker, len(raw))
 	}
 
 	// Sanity: the audit log MUST contain the non-secret fields,
 	// otherwise we wouldn't be exercising the redaction surface.
-	for _, want := range []string{"redaction-test-subject", "argon2/hash/users", "argon2/verify/"} {
+	for _, want := range []string{"redaction-test-subject", hashMarker, string(verifyMarker)} {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("audit log missing expected substring %q — test setup is broken", want)
 		}
@@ -554,6 +556,10 @@ func cachedPluginBinary() (string, error) {
 			pluginCacheErr = fmt.Errorf("cache dir: %w", err)
 			return
 		}
+		// Record the dir BEFORE the build runs so TestMain can clean
+		// it up even if the build fails. Otherwise a `go build`
+		// failure would leak the empty tempdir on every retry.
+		pluginCacheDir = dir
 		path := filepath.Join(dir, pluginName)
 		build := exec.Command("go", "build", "-trimpath", "-o", path, "./cmd/"+pluginName)
 		build.Dir = repoRoot
@@ -561,8 +567,6 @@ func cachedPluginBinary() (string, error) {
 			pluginCacheErr = fmt.Errorf("go build: %w\n%s", err, out)
 			return
 		}
-		// Record dir so TestMain can clean it up after m.Run().
-		pluginCacheDir = dir
 		pluginCachePath = path
 	})
 	return pluginCachePath, pluginCacheErr
