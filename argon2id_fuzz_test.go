@@ -12,9 +12,30 @@
 package argon2id
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
+
+// maxLoggedInputLen caps the bytes the fuzz panic-reporters echo
+// back into the test log. The seeded corpus already includes a
+// 100KB pathological string, and `go test -fuzz` will explore
+// even larger inputs; emitting them in full via %q would blow up
+// the log output and slow the fuzzer's per-iteration overhead
+// during a panic. Truncating to 256 bytes is enough to recognize
+// and reproduce a finding while keeping log volume bounded.
+const maxLoggedInputLen = 256
+
+// truncQ returns a Go-quoted form of s suitable for log output,
+// truncated at maxLoggedInputLen bytes with a length suffix when
+// the original was longer. We avoid %q on the unbounded original
+// because formatting alone copies the entire string.
+func truncQ(s string) string {
+	if len(s) <= maxLoggedInputLen {
+		return fmt.Sprintf("%q", s)
+	}
+	return fmt.Sprintf("%q...(truncated, full len=%d)", s[:maxLoggedInputLen], len(s))
+}
 
 // FuzzParsePHC drives ParsePHC with arbitrary bytes interpreted
 // as a PHC string. Seed corpus covers the canonical happy-path
@@ -77,9 +98,11 @@ func FuzzParsePHC(f *testing.F) {
 		// The contract is "structured success or structured error,
 		// never panic." Discard the return values; the recover would
 		// fire on a panic and fail the test, which is what we want.
+		// Truncate the logged input so a 100KB+ pathological seed
+		// doesn't drown the failure message.
 		defer func() {
 			if r := recover(); r != nil {
-				t.Errorf("ParsePHC panicked on input %q: %v", phc, r)
+				t.Fatalf("ParsePHC panicked on input %s: %v", truncQ(phc), r)
 			}
 		}()
 		_, _, _, _, _, _ = ParsePHC(phc)
@@ -102,7 +125,8 @@ func FuzzVerify(f *testing.F) {
 	f.Fuzz(func(t *testing.T, password, phc string) {
 		defer func() {
 			if r := recover(); r != nil {
-				t.Errorf("Verify panicked on (password=%q phc=%q): %v", password, phc, r)
+				t.Fatalf("Verify panicked on (password=%s phc=%s): %v",
+					truncQ(password), truncQ(phc), r)
 			}
 		}()
 		_, _, _ = Verify([]byte(password), phc, defaultParams())
