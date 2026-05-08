@@ -39,8 +39,13 @@ jobs:
           arch=$(dpkg --print-architecture)
           curl -fsSL -o /tmp/vault.zip \
             "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_${arch}.zip"
-          sudo unzip -d /usr/local/bin /tmp/vault.zip
-          sudo chmod +x /usr/local/bin/vault
+          # Extract to a scratch dir so we don't collide with any
+          # existing /usr/local/bin/LICENSE.txt the runner image
+          # already ships (`unzip -d /usr/local/bin` blocks on a
+          # `replace?` prompt without `-o`).
+          mkdir -p /tmp/vault-install
+          unzip -o -d /tmp/vault-install /tmp/vault.zip
+          sudo install -m 0755 /tmp/vault-install/vault /usr/local/bin/vault
           vault --version
 
       - name: go test (acceptance, real vault subprocess)
