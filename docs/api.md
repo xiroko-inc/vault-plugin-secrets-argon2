@@ -106,11 +106,14 @@ Response:
 
 ```json
 {
-  "hash_id":    "2c1f-...",
+  "hash_id":    "9c43d4e1f0a52b7c8e1d6f3a8b2c4d5e",
   "policy":     "users",
   "created_at": "2026-05-07T12:34:56.789Z"
 }
 ```
+
+(When `subject_id` is supplied, `hash_id` matches it verbatim — for
+example, a UUID like `2c1f3a4e-5b6c-...`.)
 
 Capability required: `update`.
 
@@ -186,8 +189,14 @@ Common cases:
 
 | Status | When                                                      |
 |--------|-----------------------------------------------------------|
-| 400    | Missing required field, parameter out of bounds           |
+| 400    | Missing required field, parameter out of bounds, `subject_id` collision on create |
 | 403    | Vault policy denies the capability for the path           |
 | 404    | Policy or hash_id does not exist                          |
-| 409    | `subject_id` collision on create                          |
 | 500    | Stored PHC is corrupt or out of bounds                    |
+
+Note: `subject_id` collisions surface as a 400-level error response
+through Vault's framework rather than a discrete 409 — the framework
+does not currently expose status-code-specific error helpers. The
+collision message ("hash with subject_id %q already exists; DELETE
+before re-hashing") is stable; clients should match on the message
+or on the operation context, not on a specific 4xx code.

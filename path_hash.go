@@ -5,11 +5,15 @@
 // rest: a caller-supplied subject_id "u-1" and a generated hex are
 // indistinguishable to the storage layer, by design.
 //
-// Distinguishing POST hash/<policy> (create) from DELETE hash/<id>
-// (one specific record) is done via two separate framework.Path
-// patterns rather than one — the former takes a *policy* name in the
-// path and creates a fresh record under a generated or supplied id;
-// the latter takes a *hash id* and deletes that specific record.
+// POST /hash/<policy> and DELETE /hash/<hash_id> share one
+// framework.Path pattern ("hash/<name>") and are dispatched by HTTP
+// verb in the Operations map: UpdateOperation → handleHashCreate
+// reads `name` as a policy and stores under the generated/supplied
+// hash_id; DeleteOperation → handleHashDelete reads `name` as a
+// hash_id and removes that record. Splitting them into two patterns
+// collides on the framework router (same regex shape), so we keep
+// one path entry and dispatch by Operation. The same trade-off is
+// repeated in hashPaths() with an inline comment.
 package argon2id
 
 import (

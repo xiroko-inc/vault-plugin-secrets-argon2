@@ -38,8 +38,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+class StreamParseError(RuntimeError):
+    """Raised when the JSON stream is malformed mid-stream."""
+
+
 def iter_modules(text: str):
-    """Yield top-level JSON objects from a `go list -json` stream."""
+    """Yield top-level JSON objects from a `go list -json` stream.
+
+    Raises StreamParseError on malformed input rather than swallowing
+    the error — CI must distinguish "audit input is bad" from "audit
+    found nothing flag-worthy."
+    """
     decoder = json.JSONDecoder()
     idx = 0
     n = len(text)
@@ -52,11 +61,9 @@ def iter_modules(text: str):
         try:
             obj, end = decoder.raw_decode(text, idx)
         except json.JSONDecodeError as err:
-            print(
-                f"::error::JSON decode failed at offset {idx}: {err}",
-                file=sys.stderr,
-            )
-            return
+            raise StreamParseError(
+                f"JSON decode failed at offset {idx}: {err}"
+            ) from err
         yield obj
         idx = end
 
@@ -66,7 +73,12 @@ def main(argv: list[str]) -> int:
     text = args.path.read_text()
     now = datetime.datetime.now(datetime.timezone.utc)
     flagged = 0
-    for mod in iter_modules(text):
+    try:
+        modules = list(iter_modules(text))
+    except StreamParseError as err:
+        print(f"::error::{err}", file=sys.stderr)
+        return 2
+    for mod in modules:
         if mod.get("Main"):
             continue
         # Indirect deps without an explicit version still appear in

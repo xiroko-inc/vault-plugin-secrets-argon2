@@ -133,7 +133,16 @@ func (b *backend) handlePolicyWrite(ctx context.Context, req *logical.Request, d
 		sp.Iterations = uint32(v.(int))
 	}
 	if v, ok := d.GetOk("parallelism"); ok {
-		sp.Parallelism = uint8(v.(int))
+		raw := v.(int)
+		// Reject parallelism values that would silently truncate when
+		// cast to uint8. Bounds-check after the cast is not enough — a
+		// caller passing 257 would land at 1 inside Validate(),
+		// passing the guardrail with a different value than requested.
+		if raw < int(MinParallelism) || raw > int(MaxParallelism) {
+			return logical.ErrorResponse(
+				"parallelism=%d outside [%d, %d]", raw, MinParallelism, MaxParallelism), nil
+		}
+		sp.Parallelism = uint8(raw)
 	}
 	if v, ok := d.GetOk("salt_len"); ok {
 		sp.SaltLen = uint32(v.(int))
