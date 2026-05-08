@@ -117,9 +117,9 @@ func (b *backend) handleHashCreate(ctx context.Context, req *logical.Request, d 
 	} else {
 		// Reject subject_ids that the framework's path regex
 		// (GenericNameRegex) wouldn't match. Storing one would
-		// produce an entry unreachable via verify/<id> and delete/<id>
-		// because both routes only match a single path segment of
-		// safe characters.
+		// produce an entry unreachable via verify/<id> and the
+		// DELETE-on-hash/<id> route, since both match a single path
+		// segment of safe characters.
 		if !validHashID(hashID) {
 			return logical.ErrorResponse(
 				"subject_id %q contains characters not allowed in a path segment", hashID), nil

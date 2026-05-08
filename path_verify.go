@@ -60,11 +60,14 @@ func (b *backend) handleVerify(ctx context.Context, req *logical.Request, d *fra
 		return nil, nil
 	}
 
-	// Look up the named policy as it stands today. If the policy was
-	// deleted (or never existed for hashes created before strict
-	// reference-checking), drift is still computed against the
-	// stored PHC's own embedded params via Verify; we just pass
-	// Params{} to suppress drift comparison in that edge case.
+	// Look up the named policy as it stands today to compute
+	// policy_drift. If the policy was deleted (or never existed for
+	// hashes created before strict reference-checking), we pass the
+	// zero Params, which Verify treats as the "skip drift check"
+	// sentinel — the response then reports policy_drift=false rather
+	// than comparing against meaningless zero values. The verify
+	// itself still works because the stored PHC carries its own
+	// embedded params.
 	current := Params{}
 	policy, err := readPolicy(ctx, req.Storage, stored.Policy)
 	if err != nil {
