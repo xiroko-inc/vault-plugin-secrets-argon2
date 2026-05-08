@@ -126,18 +126,30 @@ func (b *backend) handlePolicyWrite(ctx context.Context, req *logical.Request, d
 		sp.UpdatedAt = now
 	}
 
+	// Range-check every numeric input BEFORE casting to its narrower
+	// destination type. Post-cast bounds-checks aren't enough — on
+	// 64-bit platforms a large positive int can wrap into an in-range
+	// uint8 / uint32 value, silently storing a different parameter
+	// than the caller supplied. The cast is safe only after the raw
+	// int has been confirmed inside [Min, Max] for that field.
 	if v, ok := d.GetOk("memory_kib"); ok {
-		sp.MemoryKiB = uint32(v.(int))
+		raw := v.(int)
+		if raw < int(MinMemoryKiB) || raw > int(MaxMemoryKiB) {
+			return logical.ErrorResponse(
+				"memory_kib=%d outside [%d, %d]", raw, MinMemoryKiB, MaxMemoryKiB), nil
+		}
+		sp.MemoryKiB = uint32(raw)
 	}
 	if v, ok := d.GetOk("iterations"); ok {
-		sp.Iterations = uint32(v.(int))
+		raw := v.(int)
+		if raw < int(MinIterations) || raw > int(MaxIterations) {
+			return logical.ErrorResponse(
+				"iterations=%d outside [%d, %d]", raw, MinIterations, MaxIterations), nil
+		}
+		sp.Iterations = uint32(raw)
 	}
 	if v, ok := d.GetOk("parallelism"); ok {
 		raw := v.(int)
-		// Reject parallelism values that would silently truncate when
-		// cast to uint8. Bounds-check after the cast is not enough — a
-		// caller passing 257 would land at 1 inside Validate(),
-		// passing the guardrail with a different value than requested.
 		if raw < int(MinParallelism) || raw > int(MaxParallelism) {
 			return logical.ErrorResponse(
 				"parallelism=%d outside [%d, %d]", raw, MinParallelism, MaxParallelism), nil
@@ -145,10 +157,20 @@ func (b *backend) handlePolicyWrite(ctx context.Context, req *logical.Request, d
 		sp.Parallelism = uint8(raw)
 	}
 	if v, ok := d.GetOk("salt_len"); ok {
-		sp.SaltLen = uint32(v.(int))
+		raw := v.(int)
+		if raw < int(MinSaltLen) || raw > int(MaxSaltLen) {
+			return logical.ErrorResponse(
+				"salt_len=%d outside [%d, %d]", raw, MinSaltLen, MaxSaltLen), nil
+		}
+		sp.SaltLen = uint32(raw)
 	}
 	if v, ok := d.GetOk("key_len"); ok {
-		sp.KeyLen = uint32(v.(int))
+		raw := v.(int)
+		if raw < int(MinKeyLen) || raw > int(MaxKeyLen) {
+			return logical.ErrorResponse(
+				"key_len=%d outside [%d, %d]", raw, MinKeyLen, MaxKeyLen), nil
+		}
+		sp.KeyLen = uint32(raw)
 	}
 
 	if err := sp.toParams().Validate(); err != nil {

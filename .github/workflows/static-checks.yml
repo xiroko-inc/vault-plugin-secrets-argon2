@@ -5,8 +5,13 @@ on:
     branches: ["main"]
 
 permissions:
+  # contents: write is required by the conditional gofmt auto-push
+  # step. This is the global ~/.claude/standards/github-actions.md
+  # template pattern: developers are never blocked by whitespace.
+  # Splitting the auto-push into a separate push-event workflow is a
+  # defensible follow-up but not a v0.1.0 blocker — pull_request
+  # events do not expose write tokens to forked-PR contributors.
   contents: write
-  pull-requests: write
 
 jobs:
   format-and-lint:

@@ -79,10 +79,14 @@ func TestVerify_unknownIDReturns404(t *testing.T) {
 		Data:      map[string]interface{}{"password": "anything"},
 		Storage:   store,
 	})
-	// logical.ErrInvalidRequest is the framework signal for "not
-	// found / bad request"; the framework translates this to 4xx.
-	if err == nil && resp != nil && !resp.IsError() {
-		t.Errorf("expected error or error response for unknown id, got %+v", resp)
+	// Framework convention for "not found" on a non-LIST path: nil
+	// response with nil error. Anything else (a populated response,
+	// or an error) is a regression in the not-found contract.
+	if err != nil {
+		t.Errorf("err = %v, want nil for not-found", err)
+	}
+	if resp != nil {
+		t.Errorf("resp = %+v, want nil for not-found", resp)
 	}
 }
 
@@ -177,7 +181,10 @@ func TestVerify_afterDelete404s(t *testing.T) {
 		Data:      map[string]interface{}{"password": "p"},
 		Storage:   store,
 	})
-	if err == nil && resp != nil && !resp.IsError() {
-		t.Errorf("verify after delete: expected not-found, got %+v", resp)
+	if err != nil {
+		t.Errorf("verify after delete: err = %v, want nil for not-found", err)
+	}
+	if resp != nil {
+		t.Errorf("verify after delete: resp = %+v, want nil for not-found", resp)
 	}
 }
