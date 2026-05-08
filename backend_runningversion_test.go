@@ -25,7 +25,7 @@ func TestNewBackend_advertisesPluginVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newBackend: %v", err)
 	}
-	if got := b.Backend.RunningVersion; got != stamped {
+	if got := b.RunningVersion; got != stamped {
 		t.Errorf("RunningVersion: got %q, want %q", got, stamped)
 	}
 }
@@ -44,7 +44,7 @@ func TestNewBackend_emptyVersionWhenUnstamped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newBackend: %v", err)
 	}
-	if got := b.Backend.RunningVersion; got != "" {
+	if got := b.RunningVersion; got != "" {
 		t.Errorf("RunningVersion: got %q, want empty string for unstamped build", got)
 	}
 }
