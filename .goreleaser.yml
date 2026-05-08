@@ -1,0 +1,50 @@
+version: 2
+
+project_name: vault-plugin-secrets-argon2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: vault-plugin-secrets-argon2
+    main: ./cmd/vault-plugin-secrets-argon2
+    binary: vault-plugin-secrets-argon2
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_SHA256SUMS"
+  algorithm: sha256
+
+sboms:
+  - artifacts: archive
+
+changelog:
+  use: github
+  sort: asc
+
+release:
+  github:
+    owner: xiroko-inc
+    name: vault-plugin-secrets-argon2
+  draft: false
+  prerelease: auto
