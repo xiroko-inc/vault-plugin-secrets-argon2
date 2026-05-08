@@ -14,12 +14,18 @@ import (
 )
 
 // version is overwritten at link time by the release pipeline
-// (`-X main.version=<tag>`). Default keeps local builds runnable
-// without the ldflag.
-var version = "dev"
+// (`-X main.version=<tag>`). Default is empty because Vault
+// validates the reported plugin version as semver and rejects
+// sentinel strings like "dev" — an un-stamped local build runs
+// fine but reports no version through `vault plugin info`.
+var version = ""
 
 func main() {
-	_ = version // referenced by goreleaser ldflags; quiet the unused-var lint
+	// Stamp the running version onto the backend so it shows up in
+	// `vault plugin info` for operators. Must happen before
+	// plugin.ServeMultiplex calls Factory.
+	argon2id.PluginVersion = version
+
 	apiClientMeta := &api.PluginAPIClientMeta{}
 	flags := apiClientMeta.FlagSet()
 	if err := flags.Parse(os.Args[1:]); err != nil {
