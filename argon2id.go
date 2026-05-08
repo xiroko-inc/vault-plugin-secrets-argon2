@@ -228,6 +228,18 @@ func ParsePHC(s string) (algo string, version int, params Params, salt, key []by
 	params.Iterations = t
 	params.Parallelism = p
 
+	// Reject salt/key segments that would decode beyond MaxSaltLen /
+	// MaxKeyLen *before* allocating the decoded buffer. A tampered
+	// storage entry could otherwise force a multi-GiB allocation by
+	// supplying a giant base64 string and DoS the verify path.
+	if base64.RawStdEncoding.DecodedLen(len(parts[4])) > int(MaxSaltLen) {
+		err = fmt.Errorf("%w: salt segment exceeds %d-byte ceiling", ErrInvalidPHC, MaxSaltLen)
+		return
+	}
+	if base64.RawStdEncoding.DecodedLen(len(parts[5])) > int(MaxKeyLen) {
+		err = fmt.Errorf("%w: key segment exceeds %d-byte ceiling", ErrInvalidPHC, MaxKeyLen)
+		return
+	}
 	salt, err = base64.RawStdEncoding.DecodeString(parts[4])
 	if err != nil {
 		err = fmt.Errorf("%w: decoding salt: %v", ErrInvalidPHC, err)

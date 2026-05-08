@@ -96,8 +96,8 @@ Request body:
 }
 ```
 
-- If `subject_id` is omitted, the server returns a 32-byte hex
-  `hash_id`.
+- If `subject_id` is omitted, the server returns a 32-character hex
+  `hash_id` (16 random bytes encoded as hex).
 - If `subject_id` is supplied and a hash already uses it, the request
   is rejected with a 4xx (the caller must `DELETE` and re-`POST` to
   replace).

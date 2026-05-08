@@ -25,50 +25,17 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # `go list -m -u -json all` emits a sequence of full JSON
+      # objects (NOT a JSON array, NOT newline-delimited). Use
+      # JSONDecoder.raw_decode to walk the stream object-by-object —
+      # naive line-based splitting fails because nested objects
+      # (Update, Replace, Origin) contain interior `}` lines.
       - name: Inspect module graph for newly-published versions
         run: |
-          set -euo pipefail
-          THRESHOLD_DAYS=3
-          NOW_EPOCH=$(date -u +%s)
-          FLAGGED=0
-
-          # `go list -m -u -json all` emits one JSON object per module
-          # in the dependency graph, each carrying a Time field that
-          # records when the version was published.
-          go list -m -u -json all | python3 - <<'PY'
-          import json, os, sys, datetime, urllib.request
-
-          threshold = int(os.environ.get("THRESHOLD_DAYS", "3"))
-          now = datetime.datetime.now(datetime.timezone.utc)
-          flagged = 0
-          buf = []
-          for line in sys.stdin:
-              line = line.rstrip()
-              buf.append(line)
-              if line == "}":
-                  try:
-                      mod = json.loads("\n".join(buf))
-                  except json.JSONDecodeError:
-                      buf = []
-                      continue
-                  buf = []
-                  if mod.get("Main"):
-                      continue
-                  ver_time = mod.get("Time")
-                  if not ver_time:
-                      continue
-                  try:
-                      published = datetime.datetime.fromisoformat(
-                          ver_time.replace("Z", "+00:00"))
-                  except ValueError:
-                      continue
-                  age_days = (now - published).days
-                  if age_days < threshold:
-                      print(f"::warning::{mod['Path']}@{mod.get('Version','?')} "
-                            f"published {age_days}d ago — verify before relying on it")
-                      flagged += 1
-          print(f"supply-chain-audit: flagged {flagged} dependency version(s) "
-                f"published in the last {threshold} days")
-          PY
+          go list -m -u -json all > /tmp/modgraph.json
+          python3 scripts/check-mod-age.py --max-days 3 --warn-only /tmp/modgraph.json
         env:
-          THRESHOLD_DAYS: "3"
+          # `set -e` is fine here; the prior `pipefail` form was
+          # tripped by SIGPIPE from `go list` when python finished
+          # reading early. With the temp file there is no pipe.
+          PYTHONUNBUFFERED: "1"

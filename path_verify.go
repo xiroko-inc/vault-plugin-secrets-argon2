@@ -46,14 +46,18 @@ func (b *backend) handleVerify(ctx context.Context, req *logical.Request, d *fra
 	hashID := d.Get("hash_id").(string)
 	password := d.Get("password").(string)
 
+	if password == "" {
+		return logical.ErrorResponse("password is required"), nil
+	}
+
 	stored, err := readHash(ctx, req.Storage, hashID)
 	if err != nil {
 		return nil, err
 	}
 	if stored == nil {
-		// 404-equivalent: framework treats nil response on a non-LIST
-		// path as "not found" and returns the appropriate status.
-		return nil, logical.ErrInvalidRequest
+		// 404-equivalent: a nil response with nil error on a non-LIST
+		// path is the framework's "not found" signal.
+		return nil, nil
 	}
 
 	// Look up the named policy as it stands today. If the policy was

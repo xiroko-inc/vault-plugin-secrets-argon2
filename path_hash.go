@@ -1,7 +1,7 @@
 // Path handlers for /hash/<policy> (POST), /hash/<hash_id> (DELETE),
-// and /hash (LIST). Hash IDs are either server-generated 32-byte hex
-// strings or caller-supplied subject_ids — both flow through the
-// same storage path. The two namespaces are NOT distinguished at
+// and /hash (LIST). Hash IDs are either server-generated 32-character
+// hex strings (16 random bytes encoded) or caller-supplied
+// subject_ids — both flow through the same storage path. The two namespaces are NOT distinguished at
 // rest: a caller-supplied subject_id "u-1" and a generated hex are
 // indistinguishable to the storage layer, by design.
 //
@@ -63,7 +63,7 @@ func (b *backend) hashPaths() []*framework.Path {
 				"subject_id": {
 					Type: framework.TypeString,
 					Description: "Optional caller-supplied stable identifier (e.g. user UUID). " +
-						"If omitted, a server-generated 32-byte hex ID is returned. " +
+						"If omitted, a server-generated 32-character hex ID (16 random bytes) is returned. " +
 						"If supplied and an existing hash already uses it, the request is rejected.",
 				},
 			},
@@ -111,6 +111,15 @@ func (b *backend) handleHashCreate(ctx context.Context, req *logical.Request, d 
 		}
 		hashID = generated
 	} else {
+		// Reject subject_ids that the framework's path regex
+		// (GenericNameRegex) wouldn't match. Storing one would
+		// produce an entry unreachable via verify/<id> and delete/<id>
+		// because both routes only match a single path segment of
+		// safe characters.
+		if !validHashID(hashID) {
+			return logical.ErrorResponse(
+				"subject_id %q contains characters not allowed in a path segment", hashID), nil
+		}
 		// Caller-supplied subject_id collision: hard 409-equivalent.
 		// Forces explicit DELETE before re-Hash so the operator
 		// notices and audit-logs the replacement.
@@ -181,6 +190,29 @@ func newHashID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil
+}
+
+// validHashID accepts only the character set allowed by the
+// framework's GenericNameRegex routing: word chars (letters, digits,
+// underscore) plus hyphen and period. A subject_id that fails this
+// check would be unreachable via the verify/<id> and delete/<id>
+// path patterns. Reject at the boundary rather than create an
+// orphan record.
+func validHashID(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '_' || r == '-' || r == '.':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func readHash(ctx context.Context, s logical.Storage, hashID string) (*storedHash, error) {

@@ -44,7 +44,7 @@ Target: HashiCorp Vault community plugin registry. License MPL 2.0. Repo `github
 
 - [x] `cmd/vault-plugin-secrets-argon2/main.go` — `plugin.ServeMultiplex`
 - [x] `backend.go` — `Factory` + `*framework.Backend` wiring with `PathAppend`
-- [x] `backend_test.go` — table-style acceptance tests against `vault.TestCluster`
+- [ ] `backend_test.go` — table-style acceptance tests against `vault.TestCluster` (deferred — see Coverage gaps)
 
 ## Phase 4 — Path handlers (TDD per endpoint)
 
@@ -53,7 +53,7 @@ Target: HashiCorp Vault community plugin registry. License MPL 2.0. Repo `github
   - Hard-bounds rejection on every numeric field
   - DELETE 404s if any hash references the policy (storage scan)
 - [x] `path_hash.go` — POST `hash/<policy>`, DELETE `hash/<hash_id>`, LIST `hash`
-  - Server-generated 32-byte hex `hash_id` when `subject_id` omitted
+  - Server-generated 32-character hex `hash_id` (16 random bytes) when `subject_id` omitted
   - Caller-supplied `subject_id` collision → 409
   - LIST returns ids only (no PHC/parameters/password)
   - Pagination capped at 1000

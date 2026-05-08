@@ -13,7 +13,13 @@ import (
 	argon2id "github.com/xiroko-inc/vault-plugin-secrets-argon2"
 )
 
+// version is overwritten at link time by the release pipeline
+// (`-X main.version=<tag>`). Default keeps local builds runnable
+// without the ldflag.
+var version = "dev"
+
 func main() {
+	_ = version // referenced by goreleaser ldflags; quiet the unused-var lint
 	apiClientMeta := &api.PluginAPIClientMeta{}
 	flags := apiClientMeta.FlagSet()
 	if err := flags.Parse(os.Args[1:]); err != nil {

@@ -93,7 +93,10 @@ func (b *backend) policyPaths() []*framework.Path {
 func (b *backend) handlePolicyExists(ctx context.Context, req *logical.Request, d *framework.FieldData) (bool, error) {
 	name := d.Get("name").(string)
 	entry, err := req.Storage.Get(ctx, policyStoragePrefix+name)
-	return err == nil && entry != nil, nil
+	if err != nil {
+		return false, err
+	}
+	return entry != nil, nil
 }
 
 func (b *backend) handlePolicyWrite(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
@@ -182,7 +185,11 @@ func (b *backend) handlePolicyDelete(ctx context.Context, req *logical.Request, 
 		}
 		var stored storedHash
 		if err := json.Unmarshal(entry.Value, &stored); err != nil {
-			continue
+			// Fail closed: a corrupt stored hash is more likely to be
+			// referencing this policy than not, and silently skipping
+			// it would let the operator delete a policy that's still
+			// in use. Surface the corruption instead.
+			return nil, fmt.Errorf("decoding stored hash %s while checking policy references: %w", id, err)
 		}
 		if stored.Policy == name {
 			return logical.ErrorResponse(
