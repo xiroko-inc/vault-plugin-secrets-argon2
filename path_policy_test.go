@@ -57,10 +57,10 @@ func TestPolicy_createWithDefaults(t *testing.T) {
 		t.Fatal("GET policy/users: nil response")
 	}
 	wants := map[string]uint32{
-		"memory_kib":  DefaultMemoryKiB,
-		"iterations":  DefaultIterations,
-		"salt_len":    DefaultSaltLen,
-		"key_len":     DefaultKeyLen,
+		"memory_kib": DefaultMemoryKiB,
+		"iterations": DefaultIterations,
+		"salt_len":   DefaultSaltLen,
+		"key_len":    DefaultKeyLen,
 	}
 	for k, want := range wants {
 		got, ok := resp.Data[k].(uint32)

@@ -361,5 +361,5 @@ func TestVerify_rejectsOutOfBoundsParams(t *testing.T) {
 	}
 }
 
-func b64(s string) string         { return base64.RawStdEncoding.EncodeToString([]byte(s)) }
-func b64Bytes(b []byte) string    { return base64.RawStdEncoding.EncodeToString(b) }
+func b64(s string) string      { return base64.RawStdEncoding.EncodeToString([]byte(s)) }
+func b64Bytes(b []byte) string { return base64.RawStdEncoding.EncodeToString(b) }

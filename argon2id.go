@@ -29,8 +29,8 @@ import (
 // outside these bounds is rejected at the API boundary on create AND
 // at parse time on verify (defends against tampered storage).
 const (
-	MinMemoryKiB   uint32 = 8 * 1024     // 8 MiB
-	MaxMemoryKiB   uint32 = 1024 * 1024  // 1 GiB
+	MinMemoryKiB   uint32 = 8 * 1024    // 8 MiB
+	MaxMemoryKiB   uint32 = 1024 * 1024 // 1 GiB
 	MinIterations  uint32 = 1
 	MaxIterations  uint32 = 100
 	MinParallelism uint8  = 1

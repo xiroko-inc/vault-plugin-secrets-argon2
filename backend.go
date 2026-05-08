@@ -41,8 +41,8 @@ func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend,
 func newBackend() (*backend, error) {
 	b := &backend{}
 	b.Backend = &framework.Backend{
-		Help:        strings.TrimSpace(backendHelp),
-		BackendType: logical.TypeLogical,
+		Help:         strings.TrimSpace(backendHelp),
+		BackendType:  logical.TypeLogical,
 		PathsSpecial: &logical.Paths{
 			// Every path requires a Vault token. No unauthenticated
 			// access — the whole point of this plugin is that
