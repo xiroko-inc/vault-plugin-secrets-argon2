@@ -13,8 +13,10 @@
 // library against a current SDK. Subprocess-driven testing is the
 // pragmatic substitute and matches the "real Vault machinery" intent.
 //
-// Prerequisites: a `vault` binary on PATH (any 1.20+ release works;
-// the test pins root-token-id=root and reads VAULT_ADDR locally).
+// Prerequisites: a `vault` binary on PATH (any 1.20+ release works).
+// Each test picks its own free port and configures the API client
+// directly — no VAULT_ADDR or VAULT_TOKEN inheritance from the
+// developer's environment.
 //
 // Run with: make acceptance — or `go test -tags acceptance ./...`.
 // The build tag keeps `go test ./...` (and `go test -short`) cheap.
@@ -33,11 +35,33 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	vaultapi "github.com/hashicorp/vault/api"
 )
+
+// safeBuilder wraps strings.Builder with a mutex. The vault
+// subprocess writes its log on a background goroutine while the
+// test goroutine reads it on failure paths; strings.Builder is not
+// concurrency-safe and would trip -race without this wrapper.
+type safeBuilder struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *safeBuilder) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *safeBuilder) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
 
 const (
 	devRootToken    = "root"
@@ -116,13 +140,11 @@ func startDevVault(t *testing.T, withAudit bool) *devVault {
 		"-dev-plugin-dir="+pluginDir,
 		"-log-level=warn",
 	)
-	// Don't inherit VAULT_* env vars from the parent — the test must
-	// be hermetic against the developer's environment.
-	cmd.Env = append(os.Environ(),
-		"VAULT_ADDR=",
-		"VAULT_TOKEN=",
-		"VAULT_CACERT=",
-	)
+	// Hermetic env: filter out every VAULT_* variable from the
+	// parent environment. Listing only ADDR/TOKEN/CACERT would still
+	// leak VAULT_NAMESPACE, VAULT_SKIP_VERIFY, VAULT_CLIENT_TIMEOUT,
+	// etc., any of which can change behavior under test.
+	cmd.Env = filterVaultEnv(os.Environ())
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatalf("stdout pipe: %v", err)
@@ -133,14 +155,15 @@ func startDevVault(t *testing.T, withAudit bool) *devVault {
 	}
 
 	// Drain stdout so vault doesn't block on a full pipe. Capture
-	// the last 200 lines for failure diagnostics.
-	var ringBuf strings.Builder
+	// for failure diagnostics; safeBuilder protects against the
+	// goroutine/test-thread race -race would otherwise flag.
+	var ringBuf safeBuilder
 	go func() {
 		buf := make([]byte, 4096)
 		for {
 			n, err := stdout.Read(buf)
 			if n > 0 {
-				ringBuf.Write(buf[:n])
+				_, _ = ringBuf.Write(buf[:n])
 			}
 			if err != nil {
 				return
@@ -149,8 +172,13 @@ func startDevVault(t *testing.T, withAudit bool) *devVault {
 	}()
 
 	cleanup := func() {
+		// Kill is no-op if the process already exited; cmd.Wait
+		// reaps the process and releases the os/exec-managed
+		// resources (pipes, cmd state). cmd.Wait is the documented
+		// counterpart to cmd.Start; cmd.Process.Wait would skip the
+		// exec.Cmd cleanup path.
 		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
+		_ = cmd.Wait()
 	}
 
 	// Wait for the listener to come up.
@@ -163,17 +191,28 @@ func startDevVault(t *testing.T, withAudit bool) *devVault {
 	}
 	client.SetToken(devRootToken)
 
+	// Wait until Vault is initialized AND unsealed AND the API
+	// returns a non-error health response. Capture the last health
+	// snapshot so the failure message is specific about which of
+	// the three conditions never came true.
 	deadline := time.Now().Add(devStartTimeout)
+	var (
+		lastHealth *vaultapi.HealthResponse
+		lastErr    error
+		ready      bool
+	)
 	for time.Now().Before(deadline) {
-		health, err := client.Sys().Health()
-		if err == nil && health != nil && health.Initialized && !health.Sealed {
+		lastHealth, lastErr = client.Sys().Health()
+		if lastErr == nil && lastHealth != nil && lastHealth.Initialized && !lastHealth.Sealed {
+			ready = true
 			break
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	if _, err := client.Sys().Health(); err != nil {
+	if !ready {
 		cleanup()
-		t.Fatalf("vault never became ready (last %d bytes of stderr):\n%s", len(ringBuf.String()), ringBuf.String())
+		t.Fatalf("vault never became ready: lastErr=%v lastHealth=%+v\nstderr:\n%s",
+			lastErr, lastHealth, ringBuf.String())
 	}
 
 	// Register the plugin in the catalog and mount it. Dev mode
@@ -450,6 +489,22 @@ func sha256File(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// filterVaultEnv returns a copy of env with every VAULT_* entry
+// removed. Used to make the dev-server subprocess hermetic against
+// the developer's local environment — naming individual variables
+// (ADDR/TOKEN/CACERT) would silently miss VAULT_NAMESPACE,
+// VAULT_SKIP_VERIFY, VAULT_CLIENT_TIMEOUT, VAULT_TLS_*, etc.
+func filterVaultEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "VAULT_") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // freePort returns a TCP port that's currently free on 127.0.0.1.

@@ -15,7 +15,7 @@ test:
 # the API client surface. Requires a `vault` binary on PATH.
 # Argon2id is intentionally CPU-heavy; expect ~1 minute total.
 acceptance:
-	go test -tags acceptance -race ./...
+	go test -tags acceptance -race -timeout 5m ./...
 
 fmt:
 	gofmt -s -w .

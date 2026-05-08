@@ -27,24 +27,33 @@ jobs:
         run: go test -race -short ./...
 
       # Acceptance tests build the plugin binary and run it under a
-      # real `vault server -dev` subprocess. Install the official
-      # release binary directly — there is no first-party
-      # hashicorp/setup-vault action; community alternatives are
-      # avoided here in favor of a pinned upstream-release download.
+      # real `vault server -dev` subprocess. Install the pinned
+      # release archive from releases.hashicorp.com and verify the
+      # SHA-256 against the published SHA256SUMS file before
+      # extraction — supply-chain defense in depth, since this
+      # downloads + executes a third-party binary on every PR.
+      # There is no first-party hashicorp/setup-vault action; using
+      # a community action here would only shift the supply-chain
+      # surface to the action's tag.
       - name: Install vault binary
         env:
           VAULT_VERSION: 1.21.4
         run: |
           set -euo pipefail
           arch=$(dpkg --print-architecture)
-          curl -fsSL -o /tmp/vault.zip \
-            "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_${arch}.zip"
+          base="https://releases.hashicorp.com/vault/${VAULT_VERSION}"
+          archive="vault_${VAULT_VERSION}_linux_${arch}.zip"
+          curl -fsSL -o "/tmp/${archive}" "${base}/${archive}"
+          curl -fsSL -o /tmp/vault_SHA256SUMS "${base}/vault_${VAULT_VERSION}_SHA256SUMS"
+          # SHA256SUMS lists every-arch checksums; grep our archive's line
+          # and verify with sha256sum --check.
+          grep " ${archive}$" /tmp/vault_SHA256SUMS > /tmp/vault.sha256
+          (cd /tmp && sha256sum --check vault.sha256)
           # Extract to a scratch dir so we don't collide with any
           # existing /usr/local/bin/LICENSE.txt the runner image
-          # already ships (`unzip -d /usr/local/bin` blocks on a
-          # `replace?` prompt without `-o`).
+          # already ships, then install just the vault binary.
           mkdir -p /tmp/vault-install
-          unzip -o -d /tmp/vault-install /tmp/vault.zip
+          unzip -o -d /tmp/vault-install "/tmp/${archive}"
           sudo install -m 0755 /tmp/vault-install/vault /usr/local/bin/vault
           vault --version
 

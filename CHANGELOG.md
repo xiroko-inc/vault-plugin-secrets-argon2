@@ -26,6 +26,7 @@ format is based on [Keep a Changelog][kac] and this project adheres to
   guarantee, list-returns-IDs-only, and audit-log password redaction
   against a real `file` audit device.
 - CI workflows for build, static checks, schema validation, supply
-  chain audit, and release. CI installs the vault binary via
-  `hashicorp/setup-vault@v1` and runs the acceptance suite on every
-  PR.
+  chain audit, and release. CI installs the vault binary by
+  downloading the pinned release archive from
+  `releases.hashicorp.com` (verified against the published SHA-256
+  sum) and runs the acceptance suite on every PR.

@@ -117,4 +117,6 @@ missing types like `logical.PkiCertificateCounter` and signature
 mismatches in `extendedSystemViewImpl`. Subprocess-driven testing
 via `vault server -dev -dev-plugin-dir=...` is the pragmatic
 substitute, and is what `backend_test.go` implements. CI installs
-the vault binary via `hashicorp/setup-vault@v1`.
+the vault binary by downloading the pinned release archive from
+`releases.hashicorp.com` and verifying it against the published
+SHA-256 sum before extracting.
