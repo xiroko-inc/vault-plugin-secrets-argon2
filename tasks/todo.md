@@ -44,7 +44,7 @@ Target: HashiCorp Vault community plugin registry. License MPL 2.0. Repo `github
 
 - [x] `cmd/vault-plugin-secrets-argon2/main.go` — `plugin.ServeMultiplex`
 - [x] `backend.go` — `Factory` + `*framework.Backend` wiring with `PathAppend`
-- [ ] `backend_test.go` — table-style acceptance tests against `vault.TestCluster` (deferred — see Coverage gaps)
+- [x] `backend_test.go` — acceptance tests against a real `vault server -dev` subprocess (the §9.3 in-process `vault.TestCluster` pattern doesn't work cleanly because the `github.com/hashicorp/vault` main module uses an internal `replace` directive for its SDK, breaking downstream imports). Subprocess-driven testing matches the "real Vault machinery" intent and exercises `plugin.ServeMultiplex` plus real audit-device redaction. Gated by `//go:build acceptance` and run via `make acceptance`.
 
 ## Phase 4 — Path handlers (TDD per endpoint)
 
@@ -99,12 +99,24 @@ Target: HashiCorp Vault community plugin registry. License MPL 2.0. Repo `github
 
 ### Coverage gaps (declared)
 
-- **No `vault.TestCluster` acceptance test yet.** The plugin is unit-tested via `b.HandleRequest` against `logical.InmemStorage`. This exercises the framework's dispatcher and field validation but does NOT exercise the `plugin.ServeMultiplex` host bridge. Add before tagging v0.1.0.
-- **No e2e test for plugin registration / mount.** Same gap — needs `vault server -dev` or `TestCluster`.
 - **No fuzz tests on `ParsePHC`.** The boundary tests cover the structural error classes but `go test -fuzz` would catch surprises in the byte-by-byte parser. Worth adding before v1.0.0.
 
 ### Follow-ups before v1.0.0 (per requirements §13)
 
-1. `vault.TestCluster` acceptance test covering the full §9.2 list.
-2. Submit to the HashiCorp Vault Community Plugin registry once one real consumer integrates and runs for a quarter without protocol-breaking changes.
-3. Tag v0.1.0 once items 1+2 land.
+1. Submit to the HashiCorp Vault Community Plugin registry once one real consumer integrates and runs for a quarter without protocol-breaking changes.
+2. Tag v0.1.0 once item 1 lands.
+
+### Note on §9.3 `vault.TestCluster`
+
+The requirements doc names `vault.TestCluster` as the canonical
+in-process acceptance pattern. In practice the `github.com/hashicorp/vault`
+main module uses an internal `replace github.com/hashicorp/vault/sdk
+=> ./sdk` directive, so its `vault` package is not importable as a
+clean library against any current SDK release — the build fails on
+missing types like `logical.PkiCertificateCounter` and signature
+mismatches in `extendedSystemViewImpl`. Subprocess-driven testing
+via `vault server -dev -dev-plugin-dir=...` is the pragmatic
+substitute, and is what `backend_test.go` implements. CI installs
+the vault binary by downloading the pinned release archive from
+`releases.hashicorp.com` and verifying it against the published
+SHA-256 sum before extracting.
