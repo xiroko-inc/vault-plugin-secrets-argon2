@@ -24,6 +24,7 @@
 package argon2id_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -40,6 +41,16 @@ import (
 	"time"
 
 	vaultapi "github.com/hashicorp/vault/api"
+)
+
+// Plugin build cache. The plugin compiles once per `go test`
+// invocation (~1s with the cached compile, ~3s cold). Each test
+// then copies the cached binary into its own tempdir so vault
+// starts cleanly with -dev-plugin-dir.
+var (
+	pluginCacheOnce sync.Once
+	pluginCachePath string
+	pluginCacheErr  error
 )
 
 // safeBuilder wraps strings.Builder with a mutex. The vault
@@ -107,16 +118,16 @@ func startDevVault(t *testing.T, withAudit bool) *devVault {
 	}
 	pluginDir = resolvedPluginDir
 
-	// Build the plugin binary into pluginDir/<pluginName>.
-	repoRoot, err := os.Getwd()
+	// Build the plugin once per test-binary invocation (cached via
+	// sync.Once across all four acceptance tests), then copy the
+	// cached binary into this test's pluginDir.
+	cachedBinary, err := cachedPluginBinary()
 	if err != nil {
-		t.Fatalf("os.Getwd: %v", err)
+		t.Fatalf("build plugin: %v", err)
 	}
 	pluginPath := filepath.Join(pluginDir, pluginName)
-	build := exec.Command("go", "build", "-trimpath", "-o", pluginPath, "./cmd/"+pluginName)
-	build.Dir = repoRoot
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build plugin: %v\n%s", err, out)
+	if err := copyFile(cachedBinary, pluginPath, 0o755); err != nil {
+		t.Fatalf("copy plugin into pluginDir: %v", err)
 	}
 
 	// Compute SHA-256 — the plugin catalog needs it to register.
@@ -219,7 +230,13 @@ func startDevVault(t *testing.T, withAudit bool) *devVault {
 	// auto-discovers binaries in -dev-plugin-dir but does not
 	// auto-register them under our chosen plugin name — register
 	// explicitly with the SHA we computed.
-	if err := client.Sys().RegisterPluginWithContext(context.Background(), &vaultapi.RegisterPluginInput{
+	//
+	// Use a per-operation context with a 30s deadline so a hung
+	// dev-server fails fast with a specific error instead of
+	// blocking until the overall `go test -timeout` fires.
+	opCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := client.Sys().RegisterPluginWithContext(opCtx, &vaultapi.RegisterPluginInput{
 		Name:    pluginName,
 		Type:    vaultapi.PluginTypeSecrets,
 		Command: pluginName,
@@ -229,7 +246,7 @@ func startDevVault(t *testing.T, withAudit bool) *devVault {
 		t.Fatalf("register plugin: %v", err)
 	}
 
-	if err := client.Sys().Mount(mountPath, &vaultapi.MountInput{
+	if err := client.Sys().MountWithContext(opCtx, mountPath, &vaultapi.MountInput{
 		Type: pluginName,
 	}); err != nil {
 		cleanup()
@@ -245,7 +262,7 @@ func startDevVault(t *testing.T, withAudit bool) *devVault {
 
 	if withAudit {
 		dv.auditPath = filepath.Join(tmp, "audit.log")
-		if err := client.Sys().EnableAuditWithOptions("file", &vaultapi.EnableAuditOptions{
+		if err := client.Sys().EnableAuditWithOptionsWithContext(opCtx, "file", &vaultapi.EnableAuditOptions{
 			Type: "file",
 			Options: map[string]string{
 				"file_path": dv.auditPath,
@@ -449,16 +466,27 @@ func TestAcceptance_auditLogRedactsPassword(t *testing.T) {
 		t.Fatalf("verify: %v", err)
 	}
 
-	// Vault's file audit device flushes synchronously, but give it
-	// a beat to settle on slow CI runners.
-	time.Sleep(300 * time.Millisecond)
-
-	raw, err := os.ReadFile(dv.auditPath)
-	if err != nil {
-		t.Fatalf("read audit log: %v", err)
+	// Poll the audit log until it contains the verify request line
+	// rather than sleeping a fixed interval. Fast runners exit
+	// after the first poll; slow runners get up to 5s before the
+	// test fails with a specific "audit log never landed" message.
+	auditDeadline := time.Now().Add(5 * time.Second)
+	var (
+		raw    []byte
+		readEr error
+	)
+	for time.Now().Before(auditDeadline) {
+		raw, readEr = os.ReadFile(dv.auditPath)
+		if readEr == nil && bytes.Contains(raw, []byte("argon2/verify/")) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
-	if len(raw) == 0 {
-		t.Fatal("audit log empty — Vault did not flush")
+	if readEr != nil {
+		t.Fatalf("read audit log: %v", readEr)
+	}
+	if !bytes.Contains(raw, []byte("argon2/verify/")) {
+		t.Fatalf("audit log never received verify entry within 5s; size=%d", len(raw))
 	}
 
 	// Sanity: the audit log MUST contain the non-secret fields,
@@ -475,6 +503,55 @@ func TestAcceptance_auditLogRedactsPassword(t *testing.T) {
 	if strings.Contains(string(raw), sentinel) {
 		t.Errorf("audit log leaked plaintext password sentinel — DisplayAttributes.Sensitive redaction failed")
 	}
+}
+
+// cachedPluginBinary builds the plugin once per `go test`
+// invocation and caches the path. Subsequent callers receive the
+// cached path. The build output lives outside any single test's
+// t.TempDir so it survives across tests; tests still copy the
+// binary into their own pluginDir before launching vault, since
+// vault validates the plugin-dir's canonical path.
+func cachedPluginBinary() (string, error) {
+	pluginCacheOnce.Do(func() {
+		repoRoot, err := os.Getwd()
+		if err != nil {
+			pluginCacheErr = fmt.Errorf("getwd: %w", err)
+			return
+		}
+		dir, err := os.MkdirTemp("", "argon2-plugin-cache-")
+		if err != nil {
+			pluginCacheErr = fmt.Errorf("cache dir: %w", err)
+			return
+		}
+		path := filepath.Join(dir, pluginName)
+		build := exec.Command("go", "build", "-trimpath", "-o", path, "./cmd/"+pluginName)
+		build.Dir = repoRoot
+		if out, err := build.CombinedOutput(); err != nil {
+			pluginCacheErr = fmt.Errorf("go build: %w\n%s", err, out)
+			return
+		}
+		pluginCachePath = path
+	})
+	return pluginCachePath, pluginCacheErr
+}
+
+// copyFile copies src to dst with the given mode. dst is replaced
+// if it already exists.
+func copyFile(src, dst string, mode os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 // sha256File returns the lowercase hex SHA-256 of the file at path.
