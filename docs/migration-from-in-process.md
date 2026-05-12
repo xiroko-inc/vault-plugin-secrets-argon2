@@ -339,9 +339,21 @@ and want a zero-friction migration.
    ```go
    func authenticateLogin(ctx context.Context, user *User, pin string) error {
        if user.PINHashID != "" {
-           // New plugin-backed user.
+           // Plugin-backed user.
            valid, drift, err := pinAuth.Verify(ctx, user.PINHashID, pin)
            if err != nil {
+               // Vault round-trip failure or a 404 from the plugin.
+               // During the dual-read window we treat 404 as
+               // "Vault lost the record" (storage corruption,
+               // out-of-band delete, etc.) and fall back to the
+               // legacy column if the user still has one — that's
+               // exactly the rollback / repair path step 4 below
+               // calls out. Without this branch, a missing Vault
+               // record would deny login even though
+               // claimed_pin_hash still authenticates the user.
+               if errors.Is(err, ErrHashIDNotFound) && user.ClaimedPINHash != "" {
+                   return verifyLegacyAndReMigrate(ctx, user, pin)
+               }
                return err
            }
            if !valid {
@@ -360,7 +372,16 @@ and want a zero-friction migration.
            }
            return nil
        }
-       // Legacy in-process user.
+       // Legacy in-process user (never migrated).
+       return verifyLegacyAndReMigrate(ctx, user, pin)
+   }
+
+   // verifyLegacyAndReMigrate is the shared fallback path: it
+   // runs the in-process verifier against claimed_pin_hash and,
+   // on success, queues a migrate-to-plugin job. Used both by
+   // first-time login of an un-migrated user and by the
+   // dual-read 404 branch above for repair.
+   func verifyLegacyAndReMigrate(ctx context.Context, user *User, pin string) error {
        valid, err := auth.VerifyPIN(pin, user.ClaimedPINHash)
        if err != nil {
            return err
@@ -368,8 +389,6 @@ and want a zero-friction migration.
        if !valid {
            return ErrWrongPIN
        }
-       // Successful legacy verify → migrate this user via the
-       // same bounded background queue.
        pinPostLoginQueue.Submit(migrateJob{
            User: user, PIN: pin,
        })
@@ -425,6 +444,34 @@ and want a zero-friction migration.
    rehash and updating the `pin_hash_id` column — is one API
    call but adds a DB write per rehash and complicates audit
    trails (the same user gets multiple `hash_id`s over time).
+
+   **Brief 404 window between DELETE and POST.** The example
+   above leaves a short window (typically tens of ms, but
+   bounded by the slow Vault path: the worker's 10s
+   context.WithTimeout from substep 6 below) where
+   `verify/<hash_id>` returns 404. A concurrent login during
+   this window would hit the `ErrHashIDNotFound` branch in
+   `authenticateLogin` above, fall back to the legacy
+   verifier, and authenticate normally — as long as
+   `claimed_pin_hash` is still populated. Two operational
+   consequences:
+
+   - During the dual-read window (claimed_pin_hash still in
+     place for at least some users), the gap is invisible to
+     callers because the fallback path repairs it.
+   - **After the legacy column is dropped, the gap becomes a
+     transient login failure.** A user logging in concurrently
+     with their own rehash would see `ErrHashIDNotFound` with
+     no fallback path. Mitigations: (a) accept it — the gap is
+     small and self-resolves on retry; (b) switch to the
+     rotate-to-fresh-hash_id alternative described above,
+     which has no gap but requires the DB write per rehash;
+     (c) gate rehash on a per-user lock so a user's own login
+     can't race their own rehash.
+
+   For dev/internal services the "accept it" mitigation is
+   usually fine. For high-volume production logins, prefer (b)
+   or (c).
 
 6. **Queue for post-login background work** — don't naively
    `go rehash(...)` or `go migrate(...)` from the request
