@@ -119,17 +119,25 @@ func (a *vaultPINAuth) Hash(ctx context.Context, pin, subjectID string) (string,
     return id, nil
 }
 
+// ErrHashIDNotFound is returned when the plugin reports the
+// hash_id doesn't exist. Caller treats as "credential gone, no
+// path forward without re-signup".
+var ErrHashIDNotFound = errors.New("argon2: hash_id not found")
+
 func (a *vaultPINAuth) Verify(ctx context.Context, hashID, pin string) (bool, bool, error) {
     secret, err := a.client.Logical().WriteWithContext(ctx,
         fmt.Sprintf("argon2/verify/%s", hashID),
         map[string]interface{}{"password": pin})
     if err != nil {
+        // The Vault API client surfaces a 404 as a non-nil error,
+        // not as `secret == nil`. Detect it via *vault.ResponseError
+        // so the caller can distinguish "hash_id gone" from other
+        // failure modes.
+        var respErr *vault.ResponseError
+        if errors.As(err, &respErr) && respErr.StatusCode == 404 {
+            return false, false, ErrHashIDNotFound
+        }
         return false, false, fmt.Errorf("argon2 verify: %w", err)
-    }
-    if secret == nil {
-        // 404 — hash_id doesn't exist. Caller treats as
-        // "credential gone, no path forward without re-signup".
-        return false, false, fmt.Errorf("argon2 verify: hash_id %q not found", hashID)
     }
     valid, _ := secret.Data["valid"].(bool)
     drift, _ := secret.Data["policy_drift"].(bool)
@@ -194,9 +202,13 @@ ALTER TABLE claimed_wallets
 ```
 
 The plugin's `subject_id` and `hash_id` namespaces are flat —
-they share a single keyspace under `argon2/hash/`. Don't include
-characters outside `[A-Za-z0-9._-]` in `subject_id` or the
-plugin rejects the request (see [`api.md`](api.md)).
+they share a single keyspace under `argon2/hash/`. The plugin
+accepts only `[A-Za-z0-9]` plus underscore (`_`), hyphen (`-`),
+and period (`.`) — verified against `validHashID` in
+`path_hash.go`. UUIDs, ULIDs, and Vault-style alphanumeric IDs
+all pass; identifiers containing `/`, `:`, whitespace, or
+multi-byte runes are rejected at the API boundary (see
+[`api.md`](api.md)).
 
 ---
 
@@ -282,8 +294,14 @@ and want a zero-friction migration.
            }
            if drift {
                // Opportunistic re-hash under the current policy.
-               // Fire-and-forget; failure here is non-fatal.
-               go rehash(context.Background(), user, pin)
+               // Fire-and-forget; failure here is non-fatal. When
+               // pin_hash_id is reused as the subject_id (Shape A
+               // above), the plugin rejects a fresh Hash call on a
+               // colliding subject_id, so rehash() must DELETE the
+               // old entry first and then POST hash/<policy> with
+               // the same subject_id. See rehash() implementation
+               // below.
+               go rehash(context.Background(), pinAuth, user.PINHashID, pin)
            }
            return nil
        }
@@ -302,16 +320,51 @@ and want a zero-friction migration.
    ```
 
 4. The `migrateUserToPlugin` background function calls `Hash`
-   with the user's PIN, stores the returned `hash_id` in
-   `pin_hash_id`, and clears `claimed_pin_hash` in a single
-   transaction. If `Hash` fails, leave the legacy column intact
-   — the user simply migrates on their next login instead.
-5. **Replace** the signup flow to call only `Hash` and store
+   with the user's PIN and stores the returned `hash_id` in
+   `pin_hash_id`. **Do not clear `claimed_pin_hash` in the same
+   transaction** — the column is `NOT NULL`, so clearing it
+   would require either making it nullable first or using a
+   sentinel string. Easier: leave the legacy column populated
+   until the global drop in step 6. The migration marker is
+   `pin_hash_id IS NOT NULL`, not the absence of the legacy
+   column. If `Hash` fails, leave the legacy column intact and
+   the user simply migrates on their next login.
+5. The `rehash` helper (called from the drift path above)
+   handles the subject_id-collision rule explicitly:
+
+   ```go
+   func rehash(ctx context.Context, auth PINAuthenticator,
+       hashID, pin string) {
+       // The plugin rejects POST hash/<policy> when subject_id
+       // already exists (per docs/api.md §"Hash"). DELETE first
+       // so the re-create with the same subject_id succeeds.
+       if err := auth.Delete(ctx, hashID); err != nil {
+           // Log and stop — re-doing later is fine.
+           return
+       }
+       if _, err := auth.Hash(ctx, pin, hashID); err != nil {
+           // The user is now mid-migration: old hash gone,
+           // new one failed to write. Surface a metric so
+           // operators can repair from the in-process column
+           // (which we deliberately preserved in step 4).
+           return
+       }
+   }
+   ```
+
+   This is the canonical price of using `subject_id` as a stable
+   `hash_id`: rehash is two API calls (DELETE + POST) instead
+   of one. The alternative — generating a fresh `hash_id` per
+   rehash and updating the `pin_hash_id` column — is one API
+   call but adds a DB write per rehash and complicates audit
+   trails (the same user gets multiple `hash_id`s over time).
+
+6. **Replace** the signup flow to call only `Hash` and store
    only `pin_hash_id` from day one.
-6. After the migration tail flattens (typically two PIN
+7. After the migration tail flattens (typically two PIN
    lifecycles for the long-tail of inactive users), force-reset
-   any remaining users with `claimed_pin_hash` populated and
-   drop the column.
+   any remaining users where `pin_hash_id IS NULL` and drop the
+   `claimed_pin_hash` column.
 
 The dual-read window means the in-process Argon2id
 implementation stays in your binary until the column is
