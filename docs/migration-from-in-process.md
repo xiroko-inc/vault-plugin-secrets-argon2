@@ -72,7 +72,9 @@ they can grind against them offline with no rate-limiting.
 
 The "after" pattern moves the hash material into Vault. The app
 stores only an opaque `hash_id`; the plugin holds the PHC.
-`Verify` is the only operation against it, and every call is
+`Hash`, `Verify`, and `Delete` are the application's three API
+calls — `Verify` is the only password-checking operation (the
+piece that replaces in-process `VerifyPIN`), and every call is
 audit-logged.
 
 ```go
