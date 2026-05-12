@@ -11,6 +11,20 @@ format is based on [Keep a Changelog][kac] and this project adheres to
 
 ### Added
 
+- `docs/migration-from-in-process.md` — guide for services
+  already using `golang.org/x/crypto/argon2` directly that want
+  to move hash material into Vault behind this plugin. Covers
+  before/after Go code shapes, two DB schema options, three
+  rollout strategies (cutover, dual-read with lazy migration,
+  bulk import) with explicit recommendations and a "we do not
+  recommend Strategy C" note, operational considerations
+  (Vault on the login path, audit volume, token renewal,
+  rate-limit placement), and a verification checklist.
+
+## [0.1.1] — 2026-05-08
+
+### Added
+
 - Fuzz tests on `ParsePHC` and `Verify` (`argon2id_fuzz_test.go`).
   Initial run: 6.07M `FuzzParsePHC` executions + 707K `FuzzVerify`
   executions over 10 minutes each, zero panics found. Seed corpus
