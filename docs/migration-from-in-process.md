@@ -120,8 +120,21 @@ func (a *vaultPINAuth) Hash(ctx context.Context, pin, subjectID string) (string,
 }
 
 // ErrHashIDNotFound is returned when the plugin reports the
-// hash_id doesn't exist. Caller treats as "credential gone, no
-// path forward without re-signup".
+// hash_id doesn't exist. The caller's response depends on where
+// in the migration timeline they are:
+//
+//   - During the dual-read window (Strategy B, while
+//     claimed_pin_hash still exists for at least some users):
+//     a 404 means "this user hasn't been migrated yet" — fall
+//     back to the in-process VerifyPIN against
+//     claimed_pin_hash, then migrate-and-retry.
+//   - After migration completion (claimed_pin_hash dropped):
+//     a 404 means the credential is gone for good — surface
+//     it to the caller as "no such user" / re-signup required.
+//
+// The caller — not this wrapper — decides which response is
+// correct. Strategy B's authenticateLogin example below shows
+// the dual-read branching.
 var ErrHashIDNotFound = errors.New("argon2: hash_id not found")
 
 func (a *vaultPINAuth) Verify(ctx context.Context, hashID, pin string) (bool, bool, error) {
@@ -166,10 +179,11 @@ Two shapes work; pick the one that matches your existing schema.
 
 ### Shape A: `hash_id` equals the existing user identifier
 
-If your existing user identifier is already URL-safe (UUID,
-ULID, etc.), pass it as `subject_id` on every `Hash` call. The
-plugin returns that identifier as `hash_id`. The migration is
-just dropping the old PHC column:
+This is the **end-state** when your existing user identifier
+is already URL-safe (UUID, ULID, etc.): pass it as `subject_id`
+on every `Hash` call, the plugin returns that identifier
+verbatim as `hash_id`, and the `claimed_pin_hash` column drops
+out entirely.
 
 ```sql
 -- Before:
@@ -179,10 +193,24 @@ CREATE TABLE claimed_wallets (
     claimed_pin_hash TEXT NOT NULL  -- the PHC string
 );
 
--- After:
+-- End state (after migration completes for ALL users):
 ALTER TABLE claimed_wallets DROP COLUMN claimed_pin_hash;
 -- The wallet's `id` column IS the hash_id; no new column needed.
 ```
+
+**Don't drop the column at the start of the migration.** Until
+every existing user has either authenticated (and triggered the
+lazy migrate-on-login in Strategy B) or been force-reset
+(Strategy A), `claimed_pin_hash` is the only verifier for
+un-migrated users. The dropped-column SQL above is the end
+state, not the day-one schema change. Keep `claimed_pin_hash`
+populated and add the dual-read logic (or force-reset prompt)
+described in the Rollout strategies section below.
+
+A simple migration marker for Shape A: "this user has been
+migrated iff `argon2/verify/<user.id>` does not return 404."
+Strategy B's `authenticateLogin` example uses exactly this
+test on the dual-read branch.
 
 ### Shape B: separate `hash_id` column
 
@@ -257,15 +285,30 @@ require every existing user to re-set their PIN at the next
 login (sending a "PIN change required" notification ahead of
 the cutover).
 
-1. Drop the in-process `HashPIN` / `VerifyPIN`. Replace with
-   `PINAuthenticator` from the example above.
-2. Run the schema migration (drop the PHC column, or add the
-   `pin_hash_id` column nullable).
-3. On every login, if the user has no `pin_hash_id` (or their
-   old PHC column was populated), prompt for PIN reset; on PIN
-   reset, call `Hash` and store the returned `hash_id`.
-4. After 100% of active users have reset, drop the legacy
-   column.
+1. Replace the in-process `HashPIN` / `VerifyPIN` call sites with
+   `PINAuthenticator` from the example above for new signups and
+   for the reset path described below. Keep the in-process
+   `VerifyPIN` function available for the legacy column read
+   below — do NOT delete it yet.
+2. Schema change: if using Shape B, add the `pin_hash_id` column
+   nullable. **Leave `claimed_pin_hash` populated** for now —
+   dropping it strands every un-reset user.
+3. On every login, branch on whether the user has been migrated:
+    - **Migrated** (`pin_hash_id IS NOT NULL`, or Shape A:
+      `argon2/verify/<user.id>` does not 404): call
+      `pinAuth.Verify` and authenticate as normal.
+    - **Not migrated** (`pin_hash_id IS NULL` or 404): prompt
+      for PIN reset *instead of* verifying. On reset, call
+      `pinAuth.Hash`, store the returned `hash_id`, and on the
+      same transaction either set `claimed_pin_hash` to a
+      tombstone marker or — when the schema allows nullability
+      — `NULL` it. The user is now migrated.
+4. Announce the cutover deadline. Send "PIN change required" to
+   un-migrated users before the deadline.
+5. After 100% of active users have reset (or the deadline has
+   passed and you accept losing the long-tail of inactive
+   accounts), drop the `claimed_pin_hash` column and remove
+   the in-process `VerifyPIN` from the codebase.
 
 The downside is the forced PIN reset for everyone. Acceptable
 for a new service; not great for an established one.
@@ -294,14 +337,14 @@ and want a zero-friction migration.
            }
            if drift {
                // Opportunistic re-hash under the current policy.
-               // Fire-and-forget; failure here is non-fatal. When
-               // pin_hash_id is reused as the subject_id (Shape A
-               // above), the plugin rejects a fresh Hash call on a
-               // colliding subject_id, so rehash() must DELETE the
-               // old entry first and then POST hash/<policy> with
-               // the same subject_id. See rehash() implementation
-               // below.
-               go rehash(context.Background(), pinAuth, user.PINHashID, pin)
+               // Failure is non-fatal; queue and move on. The
+               // pinPostLoginQueue carries (op, hashID, pin)
+               // tuples to a bounded worker pool — see "Queue
+               // for post-login background work" below for why
+               // we don't `go rehash(...)` directly here.
+               pinPostLoginQueue.Submit(rehashJob{
+                   HashID: user.PINHashID, PIN: pin,
+               })
            }
            return nil
        }
@@ -313,8 +356,11 @@ and want a zero-friction migration.
        if !valid {
            return ErrWrongPIN
        }
-       // Successful legacy verify → migrate this user now.
-       go migrateUserToPlugin(context.Background(), user, pin)
+       // Successful legacy verify → migrate this user via the
+       // same bounded background queue.
+       pinPostLoginQueue.Submit(migrateJob{
+           User: user, PIN: pin,
+       })
        return nil
    }
    ```
@@ -359,9 +405,70 @@ and want a zero-friction migration.
    call but adds a DB write per rehash and complicates audit
    trails (the same user gets multiple `hash_id`s over time).
 
-6. **Replace** the signup flow to call only `Hash` and store
+6. **Queue for post-login background work** — don't naively
+   `go rehash(...)` or `go migrate(...)` from the request
+   goroutine. Two reasons:
+
+   - The plaintext PIN stays in memory for the lifetime of the
+     background goroutine. A naive `go` per login keeps it
+     resident until the Argon2id derivation completes (~50–
+     100 ms each). Under load that's a meaningful sensitive-
+     data lifetime extension. A bounded worker pool with an
+     explicit short-lived `context.WithTimeout` derived from
+     the request bounds it.
+   - `go func(){}()` per login provides no backpressure. A
+     traffic spike or a slow Vault produces unbounded goroutine
+     growth. A bounded queue with a fixed worker count (10–50
+     is typical for this workload) caps the in-flight count
+     and surfaces lag as queue depth, which is observable.
+
+   Shape of the queue:
+
+   ```go
+   type pinJob interface{ Run(context.Context, deps) error }
+
+   type pinPostLoginPool struct {
+       jobs chan pinJob
+   }
+
+   func newPinPostLoginPool(workers, queueDepth int, deps deps) *pinPostLoginPool {
+       p := &pinPostLoginPool{jobs: make(chan pinJob, queueDepth)}
+       for i := 0; i < workers; i++ {
+           go func() {
+               for j := range p.jobs {
+                   ctx, cancel := context.WithTimeout(
+                       context.Background(), 10*time.Second)
+                   _ = j.Run(ctx, deps) // log on err
+                   cancel()
+               }
+           }()
+       }
+       return p
+   }
+
+   func (p *pinPostLoginPool) Submit(j pinJob) {
+       select {
+       case p.jobs <- j:
+       default:
+           // Queue full: drop and metric. The user's drift
+           // flag remains true; next login retries. For
+           // unmigrated users, the legacy column is still
+           // intact so a dropped migrate job is also safe.
+           metrics.PINQueueDrops.Inc()
+       }
+   }
+   ```
+
+   `migrateJob.Run` and `rehashJob.Run` should treat the PIN
+   field as ephemeral — zero it (`for i := range j.PIN { j.PIN[i] = 0 }`)
+   after the derivation completes if you've moved the PIN
+   into a `[]byte`. If you keep it as a `string`, Go strings
+   are immutable and you can't zero them, but the lifetime is
+   still bounded by the worker's iteration.
+
+7. **Replace** the signup flow to call only `Hash` and store
    only `pin_hash_id` from day one.
-7. After the migration tail flattens (typically two PIN
+8. After the migration tail flattens (typically two PIN
    lifecycles for the long-tail of inactive users), force-reset
    any remaining users where `pin_hash_id IS NULL` and drop the
    `claimed_pin_hash` column.
