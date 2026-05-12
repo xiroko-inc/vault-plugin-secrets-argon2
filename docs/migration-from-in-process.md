@@ -378,13 +378,22 @@ and want a zero-friction migration.
 4. The `migrateUserToPlugin` background function calls `Hash`
    with the user's PIN and stores the returned `hash_id` in
    `pin_hash_id`. **Do not clear `claimed_pin_hash` in the same
-   transaction** — the column is `NOT NULL`, so clearing it
-   would require either making it nullable first or using a
-   sentinel string. Easier: leave the legacy column populated
-   until the global drop in step 6. The migration marker is
-   `pin_hash_id IS NOT NULL`, not the absence of the legacy
-   column. If `Hash` fails, leave the legacy column intact and
-   the user simply migrates on their next login.
+   transaction**, even though step 1 made the column nullable.
+   Keep the legacy verifier populated for two reasons:
+    - **Rollback path.** If a bug in the plugin or in the
+      wrapper code surfaces mid-rollout, you can flip back to
+      the in-process verifier without re-hashing every user.
+      Once `claimed_pin_hash` is cleared, that path is gone.
+    - **Repair path.** If a migrated user's `pin_hash_id` row
+      is somehow lost (Vault storage corruption, accidental
+      delete via the audit-trail-bypassing storage write the
+      threat model warns about), the in-process column still
+      authenticates the user while you investigate.
+
+   The migration marker is `pin_hash_id IS NOT NULL`, not the
+   absence of the legacy column. If `Hash` fails, leave the
+   legacy column intact and the user simply migrates on their
+   next login.
 5. The `rehash` helper (called from the drift path above)
    handles the subject_id-collision rule explicitly:
 
