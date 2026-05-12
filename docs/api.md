@@ -101,6 +101,14 @@ Request body:
 - If `subject_id` is supplied and a hash already uses it, the request
   is rejected with a 4xx (the caller must `DELETE` and re-`POST` to
   replace).
+- The `subject_id` (and therefore the resulting `hash_id`) must
+  match `[A-Za-z0-9_.-]+` — letters, digits, underscore, hyphen,
+  and period only. The plugin rejects anything else at the API
+  boundary. The restriction comes from the framework's
+  single-path-segment routing for `verify/<id>` and `DELETE
+  hash/<id>`: an id containing `/`, whitespace, or multi-byte
+  runes would land at a record unreachable through those routes.
+  UUIDs, ULIDs, and other URL-safe identifiers all pass.
 
 Response:
 
