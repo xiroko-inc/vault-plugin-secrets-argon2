@@ -158,9 +158,11 @@ func (a *vaultPINAuth) Verify(ctx context.Context, hashID, pin string) (bool, bo
 }
 
 func (a *vaultPINAuth) Delete(ctx context.Context, hashID string) error {
-    _, err := a.client.Logical().DeleteWithContext(ctx,
-        fmt.Sprintf("argon2/hash/%s", hashID))
-    return err
+    if _, err := a.client.Logical().DeleteWithContext(ctx,
+        fmt.Sprintf("argon2/hash/%s", hashID)); err != nil {
+        return fmt.Errorf("argon2 delete: %w", err)
+    }
+    return nil
 }
 ```
 
@@ -515,9 +517,14 @@ long dual-read tail. Standard pattern:
       operator never sees the plaintext. So this strategy
       requires either (a) forcing PIN reset on every user
       after import (no different from Strategy A), or
-      (b) using your own Vault tooling to `vault kv put`
-      stored hashes directly into the plugin's storage path,
-      which violates the audit-log integrity guarantee.
+      (b) writing directly to the plugin's logical storage
+      via Vault's `sys/raw` endpoint or by reaching into the
+      storage backend out-of-band (a Consul/Raft/file write).
+      Both bypasses defeat the plugin's audit-log integrity
+      guarantee — the synthesized entries never flow through
+      the plugin's `Hash` handler so no audit record exists.
+      (`vault kv` won't work either way; it only talks to the
+      KV secrets engine, not this plugin's storage path.)
 
 We do **not** recommend Strategy C. The plugin's design
 explicitly does not provide a "trust this PHC string"
