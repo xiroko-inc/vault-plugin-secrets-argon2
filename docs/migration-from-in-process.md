@@ -318,8 +318,18 @@ for a new service; not great for an established one.
 Use this if you have existing users with in-process PHC strings
 and want a zero-friction migration.
 
-1. Add a `pin_hash_id TEXT NULL` column alongside the existing
-   `claimed_pin_hash TEXT NOT NULL` column.
+1. Schema change (two parts, single migration):
+    - Add a `pin_hash_id TEXT NULL` column.
+    - Relax `claimed_pin_hash` from `NOT NULL` to nullable
+      (`ALTER TABLE ... ALTER COLUMN claimed_pin_hash DROP NOT NULL`).
+      This is required for two reasons: (a) new signups need
+      to insert a row that has `pin_hash_id` populated and
+      `claimed_pin_hash` absent, and (b) the eventual cutover
+      that drops the legacy column needs to handle rows where
+      the legacy verifier was never written. Keep the column
+      populated for un-migrated users — nullability is the
+      permission to leave it empty for new users, not an
+      instruction to clear existing values.
 2. Keep the in-process `VerifyPIN` function available but only
    call it on the fallback path below.
 3. Replace the **login** flow with:

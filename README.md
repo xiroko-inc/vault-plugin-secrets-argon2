@@ -139,7 +139,7 @@ See [`docs/integration.md`](docs/integration.md) for a Go HTTP client
 example and the recommended Vault policy for application servers.
 
 If you have an existing service that already uses
-`golang.org/x/crypto/argon2` in-process and want to move the hash
+`golang.org/x/crypto/argon2` in-process and wants to move the hash
 material into Vault behind this plugin, see
 [`docs/migration-from-in-process.md`](docs/migration-from-in-process.md)
 — it covers the DB schema change, the dual-read rollout pattern,
