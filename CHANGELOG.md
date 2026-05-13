@@ -9,6 +9,18 @@ format is based on [Keep a Changelog][kac] and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- goreleaser ldflag now stamps `main.version` from `{{.Tag}}`
+  (e.g. `v0.1.3`) instead of `{{.Version}}` (which strips the `v`
+  and yields `0.1.3`). Vault 1.21+ normalizes plugin catalog
+  versions to the canonical `vX.Y.Z` form during
+  `vault secrets enable -plugin-version=...` lookups, so a binary
+  reporting `0.1.x` got registered under that string but lookups
+  normalized to `v0.1.x` and 404'd the catalog. Consumers
+  re-pulling the plugin after the next release should be unblocked
+  on the `bootstrap-vault.sh` → `vault secrets enable` step.
+
 ### Added
 
 - `docs/migration-from-in-process.md` — guide for services

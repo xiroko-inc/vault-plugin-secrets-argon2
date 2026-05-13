@@ -15,7 +15,17 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w -X main.version={{.Version}}
+      # Stamp the tag verbatim (e.g. "v0.1.3") rather than goreleaser's
+      # default `.Version` (which strips the leading `v`). Vault 1.21+
+      # normalizes plugin catalog versions to the canonical
+      # `vX.Y.Z` form during `vault secrets enable -plugin-version=...`
+      # lookups; a binary that reports `0.1.3` (no `v`) gets registered
+      # under that string but lookups normalize to `v0.1.3` and 404 the
+      # catalog. Using `{{.Tag}}` keeps the binary's RunningVersion
+      # aligned with Vault's expectation. See
+      # vault-plugin-secrets-argon2 issue (and consuming-project fallout)
+      # in xiroko-inc/doro PR #81 follow-up debugging.
+      - -s -w -X main.version={{.Tag}}
     goos:
       - linux
       - darwin
