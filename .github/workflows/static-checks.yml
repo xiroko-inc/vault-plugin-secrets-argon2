@@ -51,7 +51,20 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.6
+          # install-mode: goinstall COMPILES golangci-lint from source under
+          # the runner's Go (1.26.3, from go-version-file: go.mod above)
+          # instead of pulling a prebuilt binary. This is load-bearing:
+          # golangci-lint's released binaries are built with latest-minus-1
+          # (its own go.mod: "minimum Go version must always be latest-1"),
+          # and the linter REFUSES any module whose targeted Go exceeds its
+          # build version. With our go.mod now on `go 1.26.3`, no prebuilt
+          # golangci-lint accepts it — but a source build under 1.26.3 has
+          # build-Go == target, so it lints clean. Cost: ~1-2 min to compile
+          # the linter each run. Revert to a pinned binary (version: vX.Y)
+          # once a golangci-lint release built on Go 1.26 ships.
+          # See decisions/2026-06-01-go-1-26-3-lint-from-source.md
+          install-mode: goinstall
+          version: latest
 
       - name: govulncheck
         uses: golang/govulncheck-action@v1

@@ -1,8 +1,6 @@
 module github.com/xiroko-inc/vault-plugin-secrets-argon2
 
-go 1.25.7
-
-toolchain go1.26.3
+go 1.26.3
 
 require (
 	github.com/hashicorp/vault/api v1.23.0
