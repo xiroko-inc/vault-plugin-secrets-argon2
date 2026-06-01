@@ -91,6 +91,79 @@ func TestHash_subjectIDCollisionRejected(t *testing.T) {
 	}
 }
 
+// overwrite=true atomically REPLACES an existing subject's hash (the
+// atomic-credential-change primitive #176 needs). Asserted via the
+// verify path against known passwords — the new PIN verifies and the
+// old one no longer does, proving the slot went old→new.
+func TestHash_overwriteReplacesExisting(t *testing.T) {
+	b, store := newTestBackend(t)
+	mustCreatePolicy(t, b, store, "users")
+	ctx := context.Background()
+
+	hash := func(pw string, overwrite bool) *logical.Response {
+		data := map[string]interface{}{"password": pw, "subject_id": "u-1"}
+		if overwrite {
+			data["overwrite"] = true
+		}
+		resp, err := b.HandleRequest(ctx, &logical.Request{
+			Operation: logical.UpdateOperation, Path: "hash/users", Data: data, Storage: store,
+		})
+		if err != nil {
+			t.Fatalf("hash(%q, overwrite=%v): %v", pw, overwrite, err)
+		}
+		return resp
+	}
+	verify := func(pw string) bool {
+		resp, err := b.HandleRequest(ctx, &logical.Request{
+			Operation: logical.UpdateOperation, Path: "verify/u-1",
+			Data: map[string]interface{}{"password": pw}, Storage: store,
+		})
+		if err != nil || resp == nil || resp.IsError() {
+			t.Fatalf("verify(%q): err=%v resp=%+v", pw, err, resp)
+		}
+		v, _ := resp.Data["valid"].(bool)
+		return v
+	}
+
+	if resp := hash("old-pin", false); resp.IsError() {
+		t.Fatalf("initial hash errored: %+v", resp)
+	}
+	if !verify("old-pin") {
+		t.Fatal("old-pin should verify after the initial hash")
+	}
+
+	if resp := hash("new-pin", true); resp.IsError() {
+		t.Fatalf("overwrite hash should succeed (not collide), got: %+v", resp)
+	}
+	if !verify("new-pin") {
+		t.Error("new-pin should verify after overwrite")
+	}
+	if verify("old-pin") {
+		t.Error("old-pin should NOT verify after overwrite — the slot was replaced")
+	}
+}
+
+// overwrite=true on a subject that doesn't exist yet behaves like a
+// normal create (no collision to skip) — so a change-pin caller need
+// not special-case "first hash vs replace".
+func TestHash_overwriteOnFreshSubjectCreates(t *testing.T) {
+	b, store := newTestBackend(t)
+	mustCreatePolicy(t, b, store, "users")
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "hash/users",
+		Data:      map[string]interface{}{"password": "p", "subject_id": "fresh-1", "overwrite": true},
+		Storage:   store,
+	})
+	if err != nil || resp == nil || resp.IsError() {
+		t.Fatalf("overwrite-on-fresh: err=%v resp=%+v", err, resp)
+	}
+	if id, _ := resp.Data["hash_id"].(string); id != "fresh-1" {
+		t.Errorf("hash_id: got %q, want fresh-1", id)
+	}
+}
+
 func TestHash_unknownPolicyRejected(t *testing.T) {
 	b, store := newTestBackend(t)
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
