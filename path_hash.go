@@ -68,7 +68,18 @@ func (b *backend) hashPaths() []*framework.Path {
 					Type: framework.TypeString,
 					Description: "Optional caller-supplied stable identifier (e.g. user UUID). " +
 						"If omitted, a server-generated 32-character hex ID (16 random bytes) is returned. " +
-						"If supplied and an existing hash already uses it, the request is rejected.",
+						"If supplied and an existing hash already uses it, the request is rejected unless overwrite=true.",
+				},
+				"overwrite": {
+					Type:    framework.TypeBool,
+					Default: false,
+					Description: "When true and subject_id names an EXISTING hash, atomically REPLACE it " +
+						"(a single storage Put — old hash → new hash, never an empty slot) instead of rejecting. " +
+						"Enables an atomic credential change (e.g. participant PIN change) WITHOUT the " +
+						"delete-then-rehash window that can strand a subject with no usable hash if the rehash " +
+						"fails. Ignored when subject_id is omitted (server-generated IDs never collide). " +
+						"Defaults false: a collision is rejected, preserving the create-only contract for " +
+						"first-hash callers (e.g. claim).",
 				},
 			},
 			Operations: map[logical.Operation]framework.OperationHandler{
@@ -91,6 +102,7 @@ func (b *backend) handleHashCreate(ctx context.Context, req *logical.Request, d 
 	policyName := d.Get("name").(string)
 	password := d.Get("password").(string)
 	subjectID := d.Get("subject_id").(string)
+	overwrite := d.Get("overwrite").(bool)
 
 	if policyName == "" {
 		return logical.ErrorResponse("policy name is required"), nil
@@ -124,16 +136,22 @@ func (b *backend) handleHashCreate(ctx context.Context, req *logical.Request, d 
 			return logical.ErrorResponse(
 				"subject_id %q contains characters not allowed in a path segment", hashID), nil
 		}
-		// Caller-supplied subject_id collision: hard 409-equivalent.
-		// Forces explicit DELETE before re-Hash so the operator
-		// notices and audit-logs the replacement.
-		existing, err := req.Storage.Get(ctx, hashStoragePrefix+hashID)
-		if err != nil {
-			return nil, err
-		}
-		if existing != nil {
-			return logical.ErrorResponse(
-				"hash with subject_id %q already exists; DELETE before re-hashing", hashID), nil
+		// Caller-supplied subject_id collision. By default this is a
+		// hard 409-equivalent — forcing explicit DELETE before re-Hash
+		// so a first-hash caller (claim) notices + audit-logs an
+		// unexpected replacement. When overwrite=true the caller is
+		// deliberately replacing the hash (a credential change), so we
+		// skip the rejection and let the single atomic Storage.Put
+		// below swap old→new with no intervening empty state.
+		if !overwrite {
+			existing, err := req.Storage.Get(ctx, hashStoragePrefix+hashID)
+			if err != nil {
+				return nil, err
+			}
+			if existing != nil {
+				return logical.ErrorResponse(
+					"hash with subject_id %q already exists; DELETE before re-hashing (or pass overwrite=true to replace atomically)", hashID), nil
+			}
 		}
 	}
 
