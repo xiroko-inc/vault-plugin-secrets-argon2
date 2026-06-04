@@ -1,6 +1,6 @@
 module github.com/xiroko-inc/vault-plugin-secrets-argon2
 
-go 1.26.3
+go 1.26.4 // bump for govulncheck gate: fixes GO-2026-5037 (crypto/x509), GO-2026-5039 (net/textproto)
 
 require (
 	github.com/hashicorp/vault/api v1.23.0
