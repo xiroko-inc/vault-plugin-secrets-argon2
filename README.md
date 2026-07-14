@@ -174,7 +174,7 @@ git clone https://github.com/xiroko-inc/vault-plugin-secrets-argon2
 cd vault-plugin-secrets-argon2
 make build      # → ./vault-plugin-secrets-argon2
 make test       # unit tests
-make acceptance # acceptance tests against an in-process Vault TestCluster
+make acceptance # acceptance tests against a real `vault server -dev` subprocess (requires a `vault` binary on PATH)
 ```
 
 ## License
