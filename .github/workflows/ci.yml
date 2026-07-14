@@ -10,8 +10,28 @@ permissions:
   contents: read
 
 jobs:
-  build-and-test:
-    runs-on: ubuntu-latest
+  # Build + unit tests — delegated to the org-default reusable Go CI
+  # (go build + go test --short -race). Go version is read from go.mod
+  # (single source of truth). See xiroko-inc/.github for the reusable.
+  ci:
+    uses: xiroko-inc/.github/.github/workflows/ci-go.yml@main
+    secrets: inherit
+    with:
+      go-version-file: go.mod
+      working-directory: .
+
+  # Acceptance tests are repo-specific coverage the reusable does not
+  # carry — they build the plugin binary and run it under a real
+  # `vault server -dev` subprocess (`-tags acceptance`). Kept local so
+  # the reusable-CI migration doesn't drop this gate. Install the pinned
+  # release archive from releases.hashicorp.com and verify the SHA-256
+  # against the published SHA256SUMS file before extraction —
+  # supply-chain defense in depth, since this downloads + executes a
+  # third-party binary on every PR. There is no first-party
+  # hashicorp/setup-vault action; a community action would only shift
+  # the supply-chain surface to the action's tag.
+  acceptance:
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -20,21 +40,6 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: go build
-        run: go build -trimpath ./...
-
-      - name: go test (race + short)
-        run: go test -race -short ./...
-
-      # Acceptance tests build the plugin binary and run it under a
-      # real `vault server -dev` subprocess. Install the pinned
-      # release archive from releases.hashicorp.com and verify the
-      # SHA-256 against the published SHA256SUMS file before
-      # extraction — supply-chain defense in depth, since this
-      # downloads + executes a third-party binary on every PR.
-      # There is no first-party hashicorp/setup-vault action; using
-      # a community action here would only shift the supply-chain
-      # surface to the action's tag.
       - name: Install vault binary
         env:
           VAULT_VERSION: 1.21.4

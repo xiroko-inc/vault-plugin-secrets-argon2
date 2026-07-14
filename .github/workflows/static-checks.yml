@@ -1,70 +1,21 @@
 name: static-checks
 
+# Thin caller for the org-default reusable Go static-checks workflow
+# (go vet + gofmt auto-fix + golangci-lint from source). See xiroko-inc/.github.
 on:
   pull_request:
     branches: ["main"]
 
-permissions:
-  # contents: write is required by the conditional gofmt auto-push
-  # step. This is the global ~/.claude/standards/github-actions.md
-  # template pattern: developers are never blocked by whitespace.
-  # Splitting the auto-push into a separate push-event workflow is a
-  # defensible follow-up but not a v0.1.0 blocker — pull_request
-  # events do not expose write tokens to forked-PR contributors.
-  contents: write
-
 jobs:
-  format-and-lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: go vet
-        run: go vet ./...
-
-      - name: gofmt
-        id: gofmt
-        run: |
-          gofmt -s -w .
-          if git diff-index --quiet HEAD --; then
-            echo "modified=false" >> $GITHUB_OUTPUT
-          else
-            echo "modified=true" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Push gofmt fixes
-        if: steps.gofmt.outputs.modified == 'true' && github.event.pull_request.head.repo.full_name == github.repository
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "chore: gofmt"
-          git push
-
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v7
-        with:
-          # install-mode: goinstall COMPILES golangci-lint from source under
-          # the runner's Go (1.26.3, from go-version-file: go.mod above)
-          # instead of pulling a prebuilt binary. This is load-bearing:
-          # golangci-lint's released binaries are built with latest-minus-1
-          # (its own go.mod: "minimum Go version must always be latest-1"),
-          # and the linter REFUSES any module whose targeted Go exceeds its
-          # build version. With our go.mod now on `go 1.26.3`, no prebuilt
-          # golangci-lint accepts it — but a source build under 1.26.3 has
-          # build-Go == target, so it lints clean. Cost: ~1-2 min to compile
-          # the linter each run. Revert to a pinned binary (version: vX.Y)
-          # once a golangci-lint release built on Go 1.26 ships.
-          # See decisions/2026-06-01-go-1-26-3-lint-from-source.md
-          install-mode: goinstall
-          version: latest
-
-      - name: govulncheck
-        uses: golang/govulncheck-action@v1
+  static:
+    # The reusable pushes gofmt fixes back to the PR branch; a reusable
+    # workflow's token is capped by the caller and can't elevate, so grant
+    # write here or the push 403s. See xiroko-inc/.github README.
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: xiroko-inc/.github/.github/workflows/static-checks-go.yml@main
+    secrets: inherit
+    with:
+      go-version-file: go.mod
+      working-directory: .

@@ -1,26 +1,31 @@
 name: supply-chain-audit
 
-# Flags any direct or transitive Go dependency published in the last
-# 3 days. Designed to surface supply chain attacks that hit early
-# adopters of newly-published versions. Warn-only — never blocks the
-# build.
-
 on:
   push:
     branches: ["main"]
   pull_request:
     branches: ["main"]
 
-permissions:
-  contents: read
-
 jobs:
+  # Blocking, reachability-based vuln gate — delegated to the org-default
+  # reusable (govulncheck). See xiroko-inc/.github.
   audit:
-    runs-on: ubuntu-latest
-    env:
-      # Private xiroko-inc modules: setup-go's cache + govulncheck's
-      # module-graph walk resolve them via the org-level token.
-      GOPRIVATE: github.com/xiroko-inc/*
+    uses: xiroko-inc/.github/.github/workflows/supply-chain-audit-go.yml@main
+    secrets: inherit
+    with:
+      go-version-file: go.mod
+      working-directory: .
+
+  # Advisory dependency-age check (warn-only): flags any module published in
+  # the last 3 days to blunt early-adopter supply-chain attacks. The reusable
+  # is govulncheck-only, so this stays local to avoid a coverage regression
+  # (per ~/.claude/standards/github-actions.md).
+  dependency-age:
+    # Pinned to match the reusables' runner (they default runs-on: ubuntu-24.04)
+    # and the platform's immutable-pin preference — not floating ubuntu-latest.
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -29,38 +34,16 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # Fork-PR guard: org secrets aren't exposed to fork PRs, so skip
-      # auth and surface a clear error rather than an opaque fetch fail.
-      - name: Configure private Go module auth
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        run: |
-          git config --global url."https://x-access-token:${{ secrets.XIROKO_PRIVATE_MODULES_TOKEN }}@github.com/xiroko-inc/".insteadOf "https://github.com/xiroko-inc/"
-
-      - name: Warn that fork PRs cannot fetch private modules
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
-        run: |
-          echo "::error::This PR is from a fork. CI cannot fetch private xiroko-inc Go modules (org secrets aren't exposed to forks). Run \`govulncheck ./...\` locally and document results in the PR description."
-          exit 1
-
-      # BLOCKING universal supply-chain gate (per github-actions.md):
-      # reachability-based stdlib + dep vuln scan. Pinned for
-      # reproducibility — bump deliberately when upgrading.
-      - name: govulncheck
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
-          govulncheck ./...
-
-      # `go list -m -u -json all` emits a sequence of full JSON
-      # objects (NOT a JSON array, NOT newline-delimited). Use
-      # JSONDecoder.raw_decode to walk the stream object-by-object —
-      # naive line-based splitting fails because nested objects
-      # (Update, Replace, Origin) contain interior `}` lines.
+      # `go list -m -u -json all` emits a sequence of full JSON objects (NOT a
+      # JSON array, NOT newline-delimited). check-mod-age.py walks the stream
+      # with JSONDecoder.raw_decode; naive line splitting fails because nested
+      # objects (Update, Replace, Origin) contain interior `}` lines.
       - name: Inspect module graph for newly-published versions
         run: |
           go list -m -u -json all > /tmp/modgraph.json
           python3 scripts/check-mod-age.py --max-days 3 --warn-only /tmp/modgraph.json
         env:
-          # `set -e` is fine here; the prior `pipefail` form was
-          # tripped by SIGPIPE from `go list` when python finished
-          # reading early. With the temp file there is no pipe.
+          # `set -e` is fine here; the prior `pipefail` form was tripped by
+          # SIGPIPE from `go list` when python finished reading early. With the
+          # temp file there is no pipe.
           PYTHONUNBUFFERED: "1"
