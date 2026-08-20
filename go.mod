@@ -5,7 +5,7 @@ go 1.26.5 // bump for govulncheck gate: fixes GO-2026-5037 (crypto/x509), GO-202
 require (
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/hashicorp/vault/sdk v0.25.1
-	golang.org/x/crypto v0.51.0
+	golang.org/x/crypto v0.52.0
 )
 
 require (
