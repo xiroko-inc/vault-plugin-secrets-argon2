@@ -1,6 +1,27 @@
 module github.com/xiroko-inc/vault-plugin-secrets-argon2
 
-go 1.26.5 // bump for govulncheck gate: fixes GO-2026-5037 (crypto/x509), GO-2026-5039 (net/textproto), GO-2026-5856 (crypto/tls, fixed in 1.26.5 — see xiroko-inc/.github#3)
+// govulncheck gate bumps. Each advisory is tagged with the release that
+// actually fixed it, which is not always the release we bumped to:
+//
+//   GO-2026-5037 (crypto/x509)     fixed in 1.26.4
+//   GO-2026-5039 (net/textproto)   fixed in 1.26.4
+//   GO-2026-5856 (crypto/tls)      fixed in 1.26.5   — see xiroko-inc/.github#3
+//   GO-2026-6218 (net/url)         fixed in 1.26.6
+//   GO-2026-6090 (crypto/tls)      fixed in 1.26.6
+//   GO-2026-5972 (encoding/asn1)   fixed in 1.26.6
+//
+// The earlier bump to 1.26.5 cleared the first three; this bump to 1.26.7
+// clears the last three, which were holding PRs #13–#17 red. Verified against
+// vuln.go.dev, not inferred from the version we happened to bump to — an
+// earlier draft of this comment attributed five of the six to the wrong
+// release, which would tell a reader on 1.26.6 they were still exposed.
+//
+// KEEP THIS COMMENT ABOVE THE DIRECTIVE, NOT ON IT. Renovate's goVersionRegex
+// is end-anchored, so a trailing `//` comment hides the directive completely
+// and this repo silently stops receiving Go toolchain updates — which is where
+// the stdlib patch level lives. That is exactly why this bump had to be made by
+// hand rather than arriving as a PR. See xiroko-inc/.github#25.
+go 1.26.7
 
 require (
 	github.com/hashicorp/vault/api v1.23.0
