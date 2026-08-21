@@ -26,8 +26,9 @@ jobs:
       # completely (its regex is end-anchored), so the repo silently stops
       # receiving Go toolchain updates — which is where the stdlib security
       # patch level lives. This repo was in that state, which is why the
-      # 1.26.5 -> 1.26.7 bump clearing GO-2026-6218 / GO-2026-6090 /
-      # GO-2026-5972 had to be made by hand. See xiroko-inc/.github#25.
+      # 1.26.5 -> 1.26.7 bump had to be made by hand. (Which advisory each
+      # release actually fixed is recorded in go.mod, not restated here.)
+      # See xiroko-inc/.github#25.
       #
       # The checker is a VENDORED VERBATIM COPY, not a reference. This repo is
       # public, so it cannot call the private xiroko-inc/.github reusable
@@ -72,8 +73,10 @@ jobs:
         uses: golangci/golangci-lint-action@v7
         with:
           # install-mode: goinstall COMPILES golangci-lint from source under
-          # the runner's Go (1.26.3, from go-version-file: go.mod above)
-          # instead of pulling a prebuilt binary. This is load-bearing:
+          # the runner's Go (whatever go.mod's directive names, via
+          # go-version-file above) instead of pulling a prebuilt binary. No
+          # version restated here: this comment said 1.26.3 through two bumps.
+          # This is load-bearing:
           # golangci-lint's released binaries are built with latest-minus-1
           # (its own go.mod: "minimum Go version must always be latest-1"),
           # and the linter REFUSES any module whose targeted Go exceeds its

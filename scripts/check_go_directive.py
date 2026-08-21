@@ -32,9 +32,13 @@ must also be by hand.
 
 And it HIDES BEHIND A MANAGER THAT STILL WORKS: the `golang` Docker base image is
 extracted by a different manager and keeps producing PRs, so an affected repo
-looks like its Go version is tracked. Compare two dashboards — `xiroko-wraith#141`
-lists both the image and the directive; `doro#249` lists only the image, and never
-proposed a toolchain bump.
+looks like its Go version is tracked. Compare two Dependency Dashboards — a
+healthy repo lists both the image and the `go` directive; an affected one lists
+only the image, and has never proposed a toolchain bump.
+
+(Deliberately generic. This file is vendored into a PUBLIC repo, and the earlier
+wording named two private repos and asserted one of them was running an unpatched
+Go stdlib. The teaching point does not need the names.)
 
 Full analysis: xiroko-inc/.github#25.
 
