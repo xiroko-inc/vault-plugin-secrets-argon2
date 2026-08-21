@@ -9,8 +9,9 @@ Renovate parses the go.mod `go` directive with an END-ANCHORED regex
     const goVersionRegex = regEx(/^\\s*go\\s+(?<version>[^\\s]+)\\s*$/);
 
 An inline `//` comment breaks the match, and the directive is then not extracted
-at all. Note the contrast one line up: `requireRegex` explicitly tolerates a
-trailing comment. This one does not.
+at all. Note the contrast at `line-parser.js:10`: `requireRegex` explicitly
+tolerates a trailing comment. This one does not. (The line immediately above is
+`toolRegex`, which is another end-anchored one — not the contrast.)
 
     go 1.26.5 // bump for govulncheck gate: ...   ->  INVISIBLE
     go 1.25.12                                    ->  DETECTED
@@ -85,6 +86,20 @@ TOOLCHAIN_DIRECTIVE = re.compile(r"^\s*toolchain\s+go(?P<version>[^\s]+)\s*$")
 LOOSE_GO = re.compile(r"^\s*go\s+\S")
 LOOSE_TOOLCHAIN = re.compile(r"^\s*toolchain\s+\S")
 
+# `toolchain default` is valid go.mod and names no version to track, so the
+# strict regex's missing `go` prefix is correct behaviour, not a hidden
+# directive. Without this, the checker reports it "invisible to Renovate" and
+# prescribes moving a comment that is not there.
+TOOLCHAIN_DEFAULT = re.compile(r"^\s*toolchain\s+default\s*$")
+
+# Renovate's `[^\s]+` swallows a comment that has no space before it, so
+# `go 1.25.0//x` MATCHES the strict regex and yields the "version" `1.25.0//x`
+# — which resolves to nothing, i.e. the same silent no-update outcome this
+# checker exists to catch, reached through a passing match instead of a failing
+# one. `go mod edit -fmt` rewrites that line (to a form we already flag), so
+# only a never-formatted file carries it. Cheap to close, so close it.
+PLAUSIBLE_VERSION = re.compile(r"^\d+(\.\d+)*([a-z0-9.\-]*)$")
+
 REMEDY = (
     "Move the comment onto its own line ABOVE the directive. Nothing else "
     "changes, and no explanatory text is lost:\n"
@@ -111,7 +126,26 @@ def check_gomod_text(text: str, label: str) -> list[str]:
         ):
             if not loose.match(stripped):
                 continue
-            if strict.match(stripped):
+            if keyword == "toolchain" and TOOLCHAIN_DEFAULT.match(stripped):
+                continue
+            match = strict.match(stripped)
+            if match:
+                version = match.group("version")
+                if not PLAUSIBLE_VERSION.match(version):
+                    failures.append(
+                        f"{label}:{lineno}: the `{keyword}` directive matches "
+                        f"Renovate's regex but yields an unusable version.\n"
+                        f"        {stripped.strip()}\n"
+                        f"    Renovate would extract `{version}`, which is not a Go "
+                        f"version and resolves to no update — the same silent outcome "
+                        f"as hiding the directive, reached through a passing match. "
+                        f"Almost always a `//` comment with no space before it, which "
+                        f"the regex's `[^\\s]+` swallows whole.\n"
+                        f"    {REMEDY}"
+                    )
+                    if keyword == "go":
+                        reported_hidden_go = True
+                    continue
                 if keyword == "go":
                     saw_go_directive = True
                 continue
@@ -144,29 +178,50 @@ def check_gomod_text(text: str, label: str) -> list[str]:
     return failures
 
 
-def check_path(path: Path) -> list[str]:
+def check_path(path: Path, label: str | None = None) -> list[str]:
     try:
         text = path.read_text()
     except OSError as exc:
         # Fail closed. A path we could not read is not a path that passed —
         # the same rule check_workflow_pins.py applies to an empty directory.
-        return [f"{path}: could not be read: {exc}"]
-    return check_gomod_text(text, str(path))
+        return [f"{label or path}: could not be read: {exc}"]
+    return check_gomod_text(text, label or str(path))
+
+
+USAGE = "Usage: check_go_directive.py [--label <name>] <go.mod> [go.mod ...]"
 
 
 def main(argv: list[str]) -> int:
+    # --label renames the file in every message. The fleet sweep fetches each
+    # go.mod to a scratch path and needs the report to name the REPO path, and
+    # the alternative — rewriting the output afterwards with `sed` — meant
+    # interpolating an arbitrary repo's file path into a sed expression. Paths
+    # legally contain `|`, `&`, `*` and `[`; the first breaks the command and,
+    # under GNU sed's `s///e`, can hand the substituted line to a shell. Passing
+    # the label in as data removes that whole surface rather than escaping it.
+    label: str | None = None
+    if argv and argv[0] == "--label":
+        if len(argv) < 3:
+            print(f"FAIL — --label needs a value and at least one file.\n{USAGE}", file=sys.stderr)
+            return 1
+        label = argv[1]
+        argv = argv[2:]
+        if len(argv) > 1:
+            # One label cannot honestly name several files.
+            print(f"FAIL — --label takes exactly one file.\n{USAGE}", file=sys.stderr)
+            return 1
+
     if not argv:
         print(
             "FAIL — no go.mod paths given, so nothing was examined. Refusing to "
-            "report success for a check that never ran.\n"
-            "Usage: check_go_directive.py <go.mod> [go.mod ...]",
+            f"report success for a check that never ran.\n{USAGE}",
             file=sys.stderr,
         )
         return 1
 
     failures: list[str] = []
     for arg in argv:
-        failures.extend(check_path(Path(arg)))
+        failures.extend(check_path(Path(arg), label))
 
     if failures:
         print(f"FAIL — {len(failures)} directive problem(s):\n")
