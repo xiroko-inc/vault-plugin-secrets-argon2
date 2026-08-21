@@ -22,6 +22,26 @@ jobs:
           ref: ${{ github.event.pull_request.head.ref }}
           repository: ${{ github.event.pull_request.head.repo.full_name }}
 
+      # An inline `//` comment on the `go` directive hides it from Renovate
+      # completely (its regex is end-anchored), so the repo silently stops
+      # receiving Go toolchain updates — which is where the stdlib security
+      # patch level lives. This repo was in that state, which is why the
+      # 1.26.5 -> 1.26.7 bump clearing GO-2026-6218 / GO-2026-6090 /
+      # GO-2026-5972 had to be made by hand. See xiroko-inc/.github#25.
+      #
+      # The checker is a VENDORED VERBATIM COPY, not a reference. This repo is
+      # public, so it cannot call the private xiroko-inc/.github reusable
+      # workflow, and a fork must get working CI with nothing privileged — a
+      # reference would break by construction. The weekly fleet sweep diffs this
+      # copy against canonical, so drift fails loudly. When you change one,
+      # change both: xiroko-inc/.github/go-directive-vendored.json is the list.
+      #
+      # Before setup-go deliberately: it needs no toolchain, no network and no
+      # module download, so a hidden directive is reported in seconds rather
+      # than after a full dependency fetch.
+      - name: Assert the go directive is visible to Renovate
+        run: python3 scripts/check_go_directive.py go.mod
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
