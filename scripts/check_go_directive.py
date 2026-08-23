@@ -245,7 +245,7 @@ def check_gomod_text(text: str, label: str) -> list[str]:
     #   go 1.27.0 + toolchain go1.27.0  ->  toolchain REMOVED   (equal)
     #   go 1.27.0 + toolchain go1.26.2  ->  preserved, inert    (lower)
     #   go 1.26   + toolchain go1.26.0  ->  preserved           (1.26 < 1.26.0)
-    #   go 1.26   + toolchain go1.26.1  ->  preserved           (the in-fleet shape)
+    #   go 1.26   + toolchain go1.26.1  ->  preserved           (two-comp go, three-comp tc)
     #   go 1.26.0 + toolchain go1.26.2  ->  preserved (holds at PATCH granularity)
     #   go 1.25.0 + toolchain go1.27.0  ->  preserved           (the target shape)
     #
