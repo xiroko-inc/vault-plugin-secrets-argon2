@@ -111,6 +111,52 @@ REMEDY = (
     "        go 1.26.7"
 )
 
+# A purely numeric dotted version, e.g. `1.27.0` or `1.26`. Anything carrying a
+# prerelease or other suffix (`1.25.0-rc.1`, `1.27rc1`) matches PLAUSIBLE_VERSION
+# but NOT this — see compare_go_versions for why that distinction is deliberate.
+#
+# Each component is length-bounded. `int()` raises above CPython's 4300-digit
+# conversion limit, and this parses a go.mod fetched from any repo in the weekly
+# sweep — an unbounded `\d+` turns crafted content into a traceback instead of
+# the named, human-readable failure every other path here returns. It fails
+# closed either way (the cron records the repo, CI reds the job), so this is
+# posture, not a hole.
+NUMERIC_VERSION = re.compile(r"^\d{1,10}(\.\d{1,10})*$")
+
+ORDERING_REMEDY = (
+    "Lower the `go` directive to a deliberate language FLOOR, strictly below "
+    "`toolchain`. The floor is the minimum a consumer needs; `toolchain` is what "
+    "the code actually builds with, and it does not propagate to consumers:\n"
+    "        go 1.25.0\n"
+    "        toolchain go1.27.0"
+)
+
+
+def compare_go_versions(left: str, right: str) -> int | None:
+    """Order two Go versions. Returns -1/0/1, or None if not comparable.
+
+    None is not "equal" and must never be treated as a pass. Go orders
+    prereleases BEFORE their release (1.27rc1 < 1.27.0), and encoding that
+    correctly here would mean reimplementing part of go/version against a
+    format this checker never needs to see: no released Go toolchain is a
+    prerelease, so a `toolchain` line naming one is already unusual enough to
+    deserve a human. Refusing to compare sends it to one; guessing would let a
+    collapsed pair through on the strength of a suffix nobody checked.
+
+    Plain list comparison, deliberately NOT zero-padded to equal width. Go
+    orders a bare language version BELOW its .0 release — `1.26 < 1.26.0` —
+    and Python's lexicographic list compare reproduces that for free, because
+    an equal shorter prefix sorts first. Padding `1.26` to `[1, 26, 0]` makes
+    it compare EQUAL to `1.26.0`, which is wrong in the one direction that
+    matters: `go 1.26` + `toolchain go1.26.0` survives `go mod tidy` (probed),
+    so a padded comparison reports a deletion that never happens.
+    """
+    if not (NUMERIC_VERSION.match(left) and NUMERIC_VERSION.match(right)):
+        return None
+    lhs = [int(p) for p in left.split(".")]
+    rhs = [int(p) for p in right.split(".")]
+    return (lhs > rhs) - (lhs < rhs)
+
 
 def check_gomod_text(text: str, label: str) -> list[str]:
     """Pure check over one go.mod's contents. `label` is used in messages.
@@ -120,6 +166,12 @@ def check_gomod_text(text: str, label: str) -> list[str]:
     failures: list[str] = []
     saw_go_directive = False
     reported_hidden_go = False
+    # (lineno, version) for the ordering check below. Only directives that both
+    # matched strictly and carry a plausible version are recorded — a hidden or
+    # garbage directive is already one reported defect, and comparing against a
+    # version Renovate cannot read would add a second message about the first.
+    go_seen: tuple[int, str] | None = None
+    toolchain_seen: tuple[int, str] | None = None
 
     for lineno, line in enumerate(text.splitlines(), start=1):
         stripped = line.rstrip("\n")
@@ -152,6 +204,9 @@ def check_gomod_text(text: str, label: str) -> list[str]:
                     continue
                 if keyword == "go":
                     saw_go_directive = True
+                    go_seen = (lineno, version)
+                else:
+                    toolchain_seen = (lineno, version)
                 continue
             if keyword == "go":
                 reported_hidden_go = True
@@ -178,6 +233,92 @@ def check_gomod_text(text: str, label: str) -> list[str]:
             "Renovate, which has the same consequence as hiding one: the stdlib "
             "patch level stops being tracked. Add one — `go mod tidy` writes it."
         )
+
+    # ------------------------------------------------------------------ #
+    # `toolchain` must be STRICTLY GREATER than `go`. The two ways it can
+    # fail that have DIFFERENT consequences, so they get different messages.
+    #
+    # Reproduced against throwaway modules on go1.26.2 (re-runnable via
+    # probe_toolchain_tidy.sh; recorded in xiroko-inc/.github ->
+    # decisions/2026-08-23-go-toolchain-split-and-osv-coverage.md):
+    #
+    #   go 1.27.0 + toolchain go1.27.0  ->  toolchain REMOVED   (equal)
+    #   go 1.27.0 + toolchain go1.26.2  ->  preserved, inert    (lower)
+    #   go 1.26   + toolchain go1.26.0  ->  preserved           (1.26 < 1.26.0)
+    #   go 1.26   + toolchain go1.26.1  ->  preserved           (two-comp go, three-comp tc)
+    #   go 1.26.0 + toolchain go1.26.2  ->  preserved (holds at PATCH granularity)
+    #   go 1.25.0 + toolchain go1.27.0  ->  preserved           (the target shape)
+    #
+    # TIDY DELETES ONLY THE EQUAL PAIR. "Not strictly greater implies deleted"
+    # is false for the lower case and must not be written anywhere — it was, in
+    # five places, and every one shipped a consequence the go command does not
+    # produce.
+    #
+    # Why the EQUAL case is worth a checker rather than a comment: the deletion
+    # is silent and self-concealing. Losing the `toolchain` line drops the
+    # module back to depType `golang`, for which Renovate's OSV worker returns
+    # null — so the stdlib security path goes away while `audit` stays green and
+    # no dashboard entry appears.
+    #
+    # ⚠️ AND BE EXACT ABOUT WHAT THIS DOES NOT CATCH. It sees the UNTIDIED
+    # precursor only. Once tidy has run, the collapse presents as a bare `go`
+    # directive, which the branch below deliberately passes — indistinguishable
+    # from a not-yet-migrated repo. On the bot path (the preset's grouped
+    # golang+toolchain rule with `rangeStrategy: bump` plus `gomodTidy` raises
+    # and strips inside ONE Renovate PR) this check never fires at all. The
+    # load-bearing guard there is each migrated repo's repo-level rule disabling
+    # depType `golang` — which no checker observes (the #11 class). This is a
+    # tripwire over the hand-edit path, not a boundary over the bot path.
+    #
+    # Fires ONLY when a `toolchain` line exists. Modules with a bare `go`
+    # directive are the fleet's current majority and are not the subject of
+    # this rule; flagging them here would red every unmigrated repo at once
+    # and bury the one signal this check exists to raise.
+    # ------------------------------------------------------------------ #
+    if go_seen and toolchain_seen:
+        go_lineno, go_version = go_seen
+        tc_lineno, tc_version = toolchain_seen
+        order = compare_go_versions(tc_version, go_version)
+        if order is None:
+            failures.append(
+                f"{label}:{tc_lineno}: cannot order `toolchain go{tc_version}` "
+                f"against `go {go_version}` (line {go_lineno}).\n"
+                f"    One of them is not a plain dotted-numeric version this "
+                f"check will order — either it carries a prerelease or other "
+                f"non-numeric suffix, or a component is longer than 10 digits. "
+                f"Neither is guessed at: Go sorts prereleases BEFORE their "
+                f"release, so a wrong guess would pass a pair that `go mod tidy` "
+                f"then collapses, and an unbounded component would reach `int()` "
+                f"above CPython's conversion limit.\n"
+                f"    There is no hand-confirmation mechanism for this checker. "
+                f"An over-long component cannot come from a real go.mod, so treat "
+                f"it as malformed input. A deliberate prerelease pin is the case "
+                f"this check cannot express — raise it rather than working around "
+                f"it."
+            )
+        elif order == 0:
+            failures.append(
+                f"{label}:{tc_lineno}: `toolchain go{tc_version}` is equal to "
+                f"`go {go_version}` (line {go_lineno}), so `go mod tidy` will "
+                f"DELETE the toolchain line.\n"
+                f"    The module then falls back to depType `golang`, for which "
+                f"Renovate's OSV worker returns null — losing the stdlib security "
+                f"path entirely, with a green `audit` check and nothing red to "
+                f"signal it. The directive to bump on a recurring basis is "
+                f"`toolchain`, not `go`.\n"
+                f"    {ORDERING_REMEDY}"
+            )
+        elif order < 0:
+            failures.append(
+                f"{label}:{tc_lineno}: `toolchain go{tc_version}` is lower than "
+                f"`go {go_version}` (line {go_lineno}), so it is INERT.\n"
+                f"    `go mod tidy` preserves this line — it is not the collapse "
+                f"case — but the go command needs at least the `go` directive, so "
+                f"it upgrades past the named toolchain and this version is never "
+                f"what builds. Renovate still tracks it, which means the thing "
+                f"being kept current is not the thing being used.\n"
+                f"    {ORDERING_REMEDY}"
+            )
 
     return failures
 
