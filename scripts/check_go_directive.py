@@ -245,6 +245,7 @@ def check_gomod_text(text: str, label: str) -> list[str]:
     #   go 1.27.0 + toolchain go1.27.0  ->  toolchain REMOVED   (equal)
     #   go 1.27.0 + toolchain go1.26.2  ->  preserved, inert    (lower)
     #   go 1.26   + toolchain go1.26.0  ->  preserved           (1.26 < 1.26.0)
+    #   go 1.26   + toolchain go1.26.1  ->  preserved           (the in-fleet shape)
     #   go 1.26.0 + toolchain go1.26.2  ->  preserved (holds at PATCH granularity)
     #   go 1.25.0 + toolchain go1.27.0  ->  preserved           (the target shape)
     #
@@ -282,15 +283,18 @@ def check_gomod_text(text: str, label: str) -> list[str]:
             failures.append(
                 f"{label}:{tc_lineno}: cannot order `toolchain go{tc_version}` "
                 f"against `go {go_version}` (line {go_lineno}).\n"
-                f"    One of them carries a prerelease or other non-numeric "
-                f"suffix, and this check refuses to guess: Go sorts prereleases "
-                f"BEFORE their release, so a wrong guess here would pass a pair "
-                f"that `go mod tidy` then collapses.\n"
-                f"    There is no hand-confirmation mechanism for this checker, "
-                f"so the only remedy that clears it is moving both to plain "
-                f"numeric versions. If a prerelease pin is deliberate and must "
-                f"stay, this check cannot express that — raise it rather than "
-                f"working around it."
+                f"    One of them is not a plain dotted-numeric version this "
+                f"check will order — either it carries a prerelease or other "
+                f"non-numeric suffix, or a component is longer than 10 digits. "
+                f"Neither is guessed at: Go sorts prereleases BEFORE their "
+                f"release, so a wrong guess would pass a pair that `go mod tidy` "
+                f"then collapses, and an unbounded component would reach `int()` "
+                f"above CPython's conversion limit.\n"
+                f"    There is no hand-confirmation mechanism for this checker. "
+                f"An over-long component cannot come from a real go.mod, so treat "
+                f"it as malformed input. A deliberate prerelease pin is the case "
+                f"this check cannot express — raise it rather than working around "
+                f"it."
             )
         elif order == 0:
             failures.append(
