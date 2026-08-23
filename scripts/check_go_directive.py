@@ -111,6 +111,42 @@ REMEDY = (
     "        go 1.26.7"
 )
 
+# A purely numeric dotted version, e.g. `1.27.0` or `1.26`. Anything carrying a
+# prerelease or other suffix (`1.25.0-rc.1`, `1.27rc1`) matches PLAUSIBLE_VERSION
+# but NOT this — see compare_go_versions for why that distinction is deliberate.
+NUMERIC_VERSION = re.compile(r"^\d+(\.\d+)*$")
+
+ORDERING_REMEDY = (
+    "Lower the `go` directive to a deliberate language FLOOR, strictly below "
+    "`toolchain`. The floor is the minimum a consumer needs; `toolchain` is what "
+    "the code actually builds with, and it does not propagate to consumers:\n"
+    "        go 1.25.0\n"
+    "        toolchain go1.27.0"
+)
+
+
+def compare_go_versions(left: str, right: str) -> int | None:
+    """Order two Go versions. Returns -1/0/1, or None if not comparable.
+
+    None is not "equal" and must never be treated as a pass. Go orders
+    prereleases BEFORE their release (1.27rc1 < 1.27.0), and encoding that
+    correctly here would mean reimplementing part of go/version against a
+    format this checker never needs to see: no released Go toolchain is a
+    prerelease, so a `toolchain` line naming one is already unusual enough to
+    deserve a human. Refusing to compare sends it to one; guessing would let a
+    collapsed pair through on the strength of a suffix nobody checked.
+    """
+    if not (NUMERIC_VERSION.match(left) and NUMERIC_VERSION.match(right)):
+        return None
+    lhs = [int(p) for p in left.split(".")]
+    rhs = [int(p) for p in right.split(".")]
+    # `go 1.26` and `toolchain go1.26.1` is a real, tidy-stable shape, so a
+    # missing patch component compares as zero rather than as unknown.
+    width = max(len(lhs), len(rhs))
+    lhs += [0] * (width - len(lhs))
+    rhs += [0] * (width - len(rhs))
+    return (lhs > rhs) - (lhs < rhs)
+
 
 def check_gomod_text(text: str, label: str) -> list[str]:
     """Pure check over one go.mod's contents. `label` is used in messages.
@@ -120,6 +156,12 @@ def check_gomod_text(text: str, label: str) -> list[str]:
     failures: list[str] = []
     saw_go_directive = False
     reported_hidden_go = False
+    # (lineno, version) for the ordering check below. Only directives that both
+    # matched strictly and carry a plausible version are recorded — a hidden or
+    # garbage directive is already one reported defect, and comparing against a
+    # version Renovate cannot read would add a second message about the first.
+    go_seen: tuple[int, str] | None = None
+    toolchain_seen: tuple[int, str] | None = None
 
     for lineno, line in enumerate(text.splitlines(), start=1):
         stripped = line.rstrip("\n")
@@ -152,6 +194,9 @@ def check_gomod_text(text: str, label: str) -> list[str]:
                     continue
                 if keyword == "go":
                     saw_go_directive = True
+                    go_seen = (lineno, version)
+                else:
+                    toolchain_seen = (lineno, version)
                 continue
             if keyword == "go":
                 reported_hidden_go = True
@@ -178,6 +223,56 @@ def check_gomod_text(text: str, label: str) -> list[str]:
             "Renovate, which has the same consequence as hiding one: the stdlib "
             "patch level stops being tracked. Add one — `go mod tidy` writes it."
         )
+
+    # ------------------------------------------------------------------ #
+    # `toolchain` must be STRICTLY GREATER than `go`, or tidy deletes it.
+    #
+    # Reproduced against throwaway modules on go1.26.2 (probe recorded in
+    # decisions/2026-08-23-go-toolchain-split-and-osv-coverage.md):
+    #
+    #   go 1.27.0 + toolchain go1.27.0  ->  toolchain REMOVED
+    #   go 1.25.0 + toolchain go1.27.0  ->  preserved
+    #   go 1.26.0 + toolchain go1.26.2  ->  preserved (holds at PATCH granularity)
+    #
+    # Why this is worth a checker rather than a comment: the deletion is
+    # silent and self-concealing. Losing the `toolchain` line drops the module
+    # back to depType `golang`, for which Renovate's OSV worker returns null —
+    # so the stdlib security path goes away while `audit` stays green and no
+    # dashboard entry appears. Nothing else in the fleet observes it.
+    #
+    # Fires ONLY when a `toolchain` line exists. Modules with a bare `go`
+    # directive are the fleet's current majority and are not the subject of
+    # this rule; flagging them here would red every unmigrated repo at once
+    # and bury the one signal this check exists to raise.
+    # ------------------------------------------------------------------ #
+    if go_seen and toolchain_seen:
+        go_lineno, go_version = go_seen
+        tc_lineno, tc_version = toolchain_seen
+        order = compare_go_versions(tc_version, go_version)
+        if order is None:
+            failures.append(
+                f"{label}:{tc_lineno}: cannot order `toolchain go{tc_version}` "
+                f"against `go {go_version}` (line {go_lineno}).\n"
+                f"    One of them carries a prerelease or other non-numeric "
+                f"suffix, and this check refuses to guess: Go sorts prereleases "
+                f"BEFORE their release, so a wrong guess here would pass a pair "
+                f"that `go mod tidy` then collapses.\n"
+                f"    Confirm by hand that `toolchain` is strictly greater, or "
+                f"move both to plain numeric versions."
+            )
+        elif order <= 0:
+            relation = "equal to" if order == 0 else "lower than"
+            failures.append(
+                f"{label}:{tc_lineno}: `toolchain go{tc_version}` is {relation} "
+                f"`go {go_version}` (line {go_lineno}), so `go mod tidy` will "
+                f"DELETE the toolchain line.\n"
+                f"    The module then falls back to depType `golang`, for which "
+                f"Renovate's OSV worker returns null — losing the stdlib security "
+                f"path entirely, with a green `audit` check and nothing red to "
+                f"signal it. The directive to bump on a recurring basis is "
+                f"`toolchain`, not `go`.\n"
+                f"    {ORDERING_REMEDY}"
+            )
 
     return failures
 
