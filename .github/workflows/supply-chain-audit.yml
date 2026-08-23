@@ -47,7 +47,7 @@ jobs:
       # reproducibility — bump deliberately when upgrading.
       - name: govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
           govulncheck ./...
 
       # `go list -m -u -json all` emits a sequence of full JSON
