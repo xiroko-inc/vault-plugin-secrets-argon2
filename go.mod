@@ -1,8 +1,9 @@
 module github.com/xiroko-inc/vault-plugin-secrets-argon2
 
-// govulncheck gate: go1.27.3 clears the reachable October 2026 stdlib vulns
-// (GO-2026-6599, -6600, -6603, -6605, -6607). Check vuln.go.dev for the release
-// that actually fixed an advisory; it is not always the one bumped to.
+// govulncheck gate: go1.27.2 fixed the reachable October 2026 stdlib vulns
+// (GO-2026-6599, -6600, -6603, -6605, -6607, -6617); go1.27.3 adds crypto/x509
+// security fixes. Check vuln.go.dev for the release that actually fixed an
+// advisory; it is not always the one bumped to.
 //
 // KEEP THIS COMMENT ABOVE THE DIRECTIVE, NOT ON IT. Renovate's goVersionRegex
 // is end-anchored, so a trailing `//` comment hides the directive completely
