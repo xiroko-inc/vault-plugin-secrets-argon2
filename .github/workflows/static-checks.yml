@@ -17,7 +17,7 @@ jobs:
   format-and-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.pull_request.head.ref }}
           repository: ${{ github.event.pull_request.head.repo.full_name }}
@@ -43,7 +43,7 @@ jobs:
       - name: Assert the go directive is visible to Renovate
         run: python3 scripts/check_go_directive.py go.mod
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
@@ -70,7 +70,7 @@ jobs:
           git push
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7
         with:
           # install-mode: goinstall COMPILES golangci-lint from source under
           # the runner's Go (whatever go.mod's directive names, via
@@ -90,4 +90,4 @@ jobs:
           version: latest
 
       - name: govulncheck
-        uses: golang/govulncheck-action@v1
+        uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1
