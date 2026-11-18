@@ -10,7 +10,7 @@ module github.com/xiroko-inc/vault-plugin-secrets-argon2
 // and this repo silently stops receiving Go toolchain updates — which is where
 // the stdlib patch level lives. That is exactly why this bump had to be made by
 // hand rather than arriving as a PR. See xiroko-inc/.github#25.
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/hashicorp/vault/api v1.23.0
